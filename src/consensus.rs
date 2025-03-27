@@ -1,4 +1,7 @@
-use crate::{messaging::NodeMessenger, state_machine::StateMachine};
+use crate::{
+    messaging::{Message, NodeMessenger},
+    state_machine::StateMachine,
+};
 
 #[derive(Debug, Clone)]
 pub enum NodeState {
@@ -30,11 +33,38 @@ impl Node {
         }
     }
 
-    pub fn handle_request_vote(&mut self, term: u64) -> bool {
-        unimplemented!()
+    /// Handle a request vote from a candidate
+    pub fn handle_request_vote(&mut self, candidate_term: u64, candidate_id: u64) {
+        let response_message: Message;
+        // If candidate_term is older than current_term, reject
+        if candidate_term < self.current_term {
+            response_message =
+                Message::VoteResponse { term: self.current_term, vote_granted: false };
+        } else {
+            // If candidate_term is greater than current_term, convert to follower
+            if candidate_term > self.current_term {
+                self.state = NodeState::Follower;
+                self.current_term = candidate_term;
+                self.voted_for = Some(candidate_id);
+            }
+
+            // if haven't voted for anyone, vote for candidate
+            if self.voted_for.is_none() {
+                self.voted_for = Some(candidate_id);
+
+                response_message =
+                    Message::VoteResponse { term: self.current_term, vote_granted: true };
+            } else {
+                // if already voted for someone, reject
+                response_message =
+                    Message::VoteResponse { term: self.current_term, vote_granted: false };
+            }
+        }
+
+        self.messenger.send_to(self.id, candidate_id, response_message);
     }
 
-    pub fn handle_append_entries(&mut self, term: u64) -> bool {
+    pub fn handle_append_entries(&mut self, term: u64) {
         unimplemented!()
     }
 }

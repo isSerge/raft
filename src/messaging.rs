@@ -59,11 +59,16 @@ impl NodeMessenger {
         Self { network, sender, receiver: Arc::new(Mutex::new(receiver)) }
     }
 
-    pub fn send(&self, message: Message) {
+    pub fn local_send(&self, message: Message) {
         self.sender.send(message).unwrap();
     }
 
-    pub fn receive(&self) -> Message {
+    pub fn local_receive(&self) -> Message {
         self.receiver.lock().unwrap().recv().unwrap()
+    }
+
+    /// Sends a message to a specific node using the global Network.
+    pub fn send_to(&self, from: u64, to: u64, message: Message) {
+        self.network.lock().unwrap().send_message(from, to, message);
     }
 }
