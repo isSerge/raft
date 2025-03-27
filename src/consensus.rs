@@ -36,12 +36,13 @@ impl Node {
     /// Handle a request vote from a candidate
     pub fn handle_request_vote(&mut self, candidate_term: u64, candidate_id: u64) {
         let response_message: Message;
-        // If candidate_term is older than current_term, reject
+        // 1. If candidate_term is older than current_term, reject
         if candidate_term < self.current_term {
             response_message =
                 Message::VoteResponse { term: self.current_term, vote_granted: false };
         } else {
-            // If candidate_term is greater than current_term, convert to follower and reset
+            // 2. If candidate_term is greater than current_term, convert to follower and
+            //    reset
             // voted_for
             if candidate_term > self.current_term {
                 self.state = NodeState::Follower;
@@ -49,14 +50,12 @@ impl Node {
                 self.voted_for = None;
             }
 
-            // if haven't voted for anyone, vote for candidate
+            // 3. Vote if we haven't voted yet.
             if self.voted_for.is_none() {
                 self.voted_for = Some(candidate_id);
-
                 response_message =
                     Message::VoteResponse { term: self.current_term, vote_granted: true };
             } else {
-                // if already voted for someone, reject
                 response_message =
                     Message::VoteResponse { term: self.current_term, vote_granted: false };
             }
