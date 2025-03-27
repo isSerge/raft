@@ -41,11 +41,12 @@ impl Node {
             response_message =
                 Message::VoteResponse { term: self.current_term, vote_granted: false };
         } else {
-            // If candidate_term is greater than current_term, convert to follower
+            // If candidate_term is greater than current_term, convert to follower and reset
+            // voted_for
             if candidate_term > self.current_term {
                 self.state = NodeState::Follower;
                 self.current_term = candidate_term;
-                self.voted_for = Some(candidate_id);
+                self.voted_for = None;
             }
 
             // if haven't voted for anyone, vote for candidate
