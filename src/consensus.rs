@@ -1,4 +1,4 @@
-use crate::state_machine::StateMachine;
+use crate::{messaging::NodeMessenger, state_machine::StateMachine};
 
 #[derive(Debug, Clone)]
 pub enum NodeState {
@@ -7,25 +7,26 @@ pub enum NodeState {
     Candidate,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Node {
     pub id: u64,
     pub state: NodeState,
     pub current_term: u64,
     pub voted_for: Option<u64>,
     pub state_machine: StateMachine,
+    pub messenger: NodeMessenger,
     // TODO: add log
-    // TODO: add messaging
 }
 
 impl Node {
-    pub fn new(id: u64, state_machine: StateMachine) -> Self {
+    pub fn new(id: u64, state_machine: StateMachine, messenger: NodeMessenger) -> Self {
         Self {
             id,
             state: NodeState::Follower,
             current_term: 0,
             voted_for: None,
             state_machine,
+            messenger,
         }
     }
 
