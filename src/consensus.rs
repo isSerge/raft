@@ -3,11 +3,17 @@ use crate::{
     state_machine::StateMachine,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NodeState {
     Leader,
     Follower,
     Candidate,
+}
+
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    pub term: u64,
+    pub command: String,
 }
 
 #[derive(Debug)]
@@ -18,7 +24,7 @@ pub struct Node {
     pub voted_for: Option<u64>,
     pub state_machine: StateMachine,
     pub messenger: NodeMessenger,
-    // TODO: add log
+    pub log: Vec<LogEntry>,
 }
 
 impl Node {
@@ -30,6 +36,7 @@ impl Node {
             voted_for: None,
             state_machine,
             messenger,
+            log: vec![],
         }
     }
 
@@ -64,7 +71,13 @@ impl Node {
         self.messenger.send_to(self.id, candidate_id, response_message);
     }
 
-    pub fn handle_append_entries(&mut self, leader_term: u64, leader_id: u64) {
+    /// Handle an AppendEntries request from a leader
+    pub fn handle_append_entries(
+        &mut self,
+        leader_term: u64,
+        leader_id: u64,
+        new_entries: Vec<LogEntry>,
+    ) {
         let response_message: Message;
 
         // If leader_term is older than current_term, reject
@@ -78,14 +91,43 @@ impl Node {
             // 2. convert to follower (in case it was a candidate)
             self.state = NodeState::Follower;
 
-            // 3. update state_machine
-            // TODO: apply log entries
-            self.state_machine.apply(1);
+            // 3. append log entries to own log
+            self.log.extend(new_entries.clone());
+
+            // 4. update state_machine
+            self.state_machine.apply(1 + new_entries.len() as u64);
 
             response_message = Message::AppendResponse { term: self.current_term, success: true };
         }
 
         // send response to leader
         self.messenger.send_to(self.id, leader_id, response_message);
+    }
+
+    pub fn append_to_log(&mut self, command: String) {
+        // Ensure that only a leader can append a new command.
+        if self.state != NodeState::Leader {
+            println!("Node {} is not a leader. Cannot append new command.", self.id);
+            return;
+        }
+
+        // Append the new entry to the log.
+        let new_entry = LogEntry { term: self.current_term, command };
+        self.log.push(new_entry.clone());
+        println!("Leader Node {} appended new log entry: {:?}", self.id, new_entry);
+
+        // Update the state machine.
+        self.state_machine.apply(1);
+        println!("Leader Node {} updated its own state machine.", self.id);
+
+        // Broadcast the new log entry to all other nodes.
+        self.messenger.broadcast(
+            self.id,
+            Message::AppendEntries {
+                term: self.current_term,
+                leader_id: self.id,
+                new_entries: vec![new_entry],
+            },
+        );
     }
 }

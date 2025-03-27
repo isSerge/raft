@@ -6,6 +6,8 @@ use std::{
     },
 };
 
+use crate::consensus::LogEntry;
+
 /// A message in the network
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -14,7 +16,7 @@ pub enum Message {
     /// Response to vote request
     VoteResponse { term: u64, vote_granted: bool },
     /// Request to append entries to other nodes
-    AppendEntries { term: u64, leader_id: u64 },
+    AppendEntries { term: u64, leader_id: u64, new_entries: Vec<LogEntry> },
     /// Response to append request
     AppendResponse { term: u64, success: bool },
 }
@@ -82,5 +84,10 @@ impl NodeMessenger {
     /// Sends a message to a specific node using the global Network.
     pub fn send_to(&self, from: u64, to: u64, message: Message) {
         self.network.lock().unwrap().send_message(from, to, message);
+    }
+
+    /// Broadcasts a message to all nodes using the global Network.
+    pub fn broadcast(&self, from: u64, message: Message) {
+        self.network.lock().unwrap().broadcast(from, message);
     }
 }

@@ -72,21 +72,11 @@ fn simulate_election(
     }
 }
 
-fn simulate_append_entries(network: &Arc<Mutex<Network>>, nodes: &mut [Node], leader_id: u64) {
-    // Explicitly update the leader's own state machine since it doesn't receive its
-    // own message.
+fn simulate_append_entries(nodes: &mut [Node], leader_id: u64) {
+    // Leader appends a new command to its own log.
     {
         let leader = nodes.iter_mut().find(|n| n.id == leader_id).unwrap();
-        // For simulation purposes, we apply a dummy command to update the state
-        // machine.
-        leader.state_machine.apply(1);
-        println!("Leader Node {} updated its own state machine.", leader_id);
-    }
-
-    // Leader sends an AppendEntries to all other nodes.
-    {
-        let network = network.lock().unwrap();
-        network.broadcast(leader_id, Message::AppendEntries { term: 1, leader_id });
+        leader.append_to_log("command".to_string());
     }
 
     // Each node (except the leader) receives the AppendRequest and responds.
@@ -97,15 +87,15 @@ fn simulate_append_entries(network: &Arc<Mutex<Network>>, nodes: &mut [Node], le
 
         // Each follower receives the AppendRequest.
         let msg = node.messenger.receive();
-        if let Message::AppendEntries { term, leader_id } = msg {
-            node.handle_append_entries(term, leader_id);
+        if let Message::AppendEntries { term, leader_id, new_entries } = msg {
+            node.handle_append_entries(term, leader_id, new_entries);
         }
     }
 
     for node in nodes {
         println!(
-            "Node {}: state: {:?}, term: {}, state_machine: {:?}",
-            node.id, node.state, node.current_term, node.state_machine.state
+            "Node {}: state: {:?}, term: {}, state_machine: {:?}, log: {:?}",
+            node.id, node.state, node.current_term, node.state_machine.state, node.log
         );
     }
 }
@@ -123,5 +113,5 @@ fn main() {
 
     simulate_election(&network, &mut nodes, 0, 1);
 
-    simulate_append_entries(&network, &mut nodes, 0);
+    simulate_append_entries(&mut nodes, 0);
 }
