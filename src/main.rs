@@ -95,7 +95,11 @@ fn simulate_append_entries(nodes: &mut [Node], leader_id: u64) {
     for node in nodes {
         println!(
             "Node {}: state: {:?}, term: {}, state_machine: {:?}, log: {:?}",
-            node.id, node.state, node.current_term, node.state_machine.state, node.log
+            node.id,
+            node.state,
+            node.current_term,
+            node.state_machine.get_state(),
+            node.log
         );
     }
 }

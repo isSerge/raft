@@ -1,14 +1,19 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StateMachine {
-    pub state: u64,
+    state: u64,
 }
 
 impl StateMachine {
     pub fn new() -> Self {
-        Self { state: 0 }
+        Self::default()
     }
 
-    pub fn apply(&mut self, command: u64) {
+    pub fn apply(&mut self, command: u64) -> &mut Self {
         self.state += command;
+        self
+    }
+
+    pub fn get_state(&self) -> u64 {
+        self.state
     }
 }
