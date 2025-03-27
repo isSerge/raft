@@ -64,7 +64,28 @@ impl Node {
         self.messenger.send_to(self.id, candidate_id, response_message);
     }
 
-    pub fn handle_append_entries(&mut self, term: u64) {
-        unimplemented!()
+    pub fn handle_append_entries(&mut self, leader_term: u64, leader_id: u64) {
+        let response_message: Message;
+
+        // If leader_term is older than current_term, reject
+        if leader_term < self.current_term {
+            response_message = Message::AppendResponse { term: self.current_term, success: false };
+        } else {
+            // If leader_term is equal or greater than current_term:
+            // 1. update current_term
+            self.current_term = leader_term;
+
+            // 2. convert to follower (in case it was a candidate)
+            self.state = NodeState::Follower;
+
+            // 3. update state_machine
+            // TODO: apply log entries
+            self.state_machine.apply(1);
+
+            response_message = Message::AppendResponse { term: self.current_term, success: true };
+        }
+
+        // send response to leader
+        self.messenger.send_to(self.id, leader_id, response_message);
     }
 }
