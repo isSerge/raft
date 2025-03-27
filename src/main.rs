@@ -10,7 +10,7 @@ use state_machine::StateMachine;
 
 fn simulate_election(
     network: &Arc<Mutex<Network>>,
-    nodes: &mut Vec<Node>,
+    nodes: &mut [Node],
     candidate_id: u64,
     candidate_term: u64,
 ) {
@@ -44,11 +44,68 @@ fn simulate_election(
         }
     }
 
-    // After processing the vote requests, let's print the state of each node.
+    // After processing the vote requests, print the state of each node.
+    for node in &mut *nodes {
+        println!(
+            "Node {}: state: {:?}, term: {}, voted_for: {:?}",
+            node.id, node.state, node.current_term, node.voted_for
+        );
+    }
+
+    // Check if the candidate won the election and update the state of the
+    // candidate.
+    let votes = nodes.iter().filter(|n| n.voted_for == Some(candidate_id)).count();
+    let has_majority_votes = votes > nodes.len() / 2;
+    let candidate_node = nodes.iter_mut().find(|n| n.id == candidate_id).unwrap();
+
+    if has_majority_votes {
+        println!("Candidate {} won the election", candidate_id);
+        candidate_node.state = NodeState::Leader;
+    }
+
+    // Print the state of each node.
     for node in nodes {
         println!(
             "Node {}: state: {:?}, term: {}, voted_for: {:?}",
             node.id, node.state, node.current_term, node.voted_for
+        );
+    }
+}
+
+fn simulate_append_entries(network: &Arc<Mutex<Network>>, nodes: &mut [Node], leader_id: u64) {
+    // Explicitly update the leader's own state machine since it doesn't receive its
+    // own message.
+    {
+        let leader = nodes.iter_mut().find(|n| n.id == leader_id).unwrap();
+        // For simulation purposes, we apply a dummy command to update the state
+        // machine.
+        leader.state_machine.apply(1);
+        println!("Leader Node {} updated its own state machine.", leader_id);
+    }
+
+    // Leader sends an AppendEntries to all other nodes.
+    {
+        let network = network.lock().unwrap();
+        network.broadcast(leader_id, Message::AppendEntries { term: 1, leader_id });
+    }
+
+    // Each node (except the leader) receives the AppendRequest and responds.
+    for node in nodes.iter_mut() {
+        if node.id == leader_id {
+            continue;
+        }
+
+        // Each follower receives the AppendRequest.
+        let msg = node.messenger.receive();
+        if let Message::AppendEntries { term, leader_id } = msg {
+            node.handle_append_entries(term, leader_id);
+        }
+    }
+
+    for node in nodes {
+        println!(
+            "Node {}: state: {:?}, term: {}, state_machine: {:?}",
+            node.id, node.state, node.current_term, node.state_machine.state
         );
     }
 }
@@ -65,4 +122,6 @@ fn main() {
     }
 
     simulate_election(&network, &mut nodes, 0, 1);
+
+    simulate_append_entries(&network, &mut nodes, 0);
 }

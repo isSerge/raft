@@ -14,7 +14,7 @@ pub enum Message {
     /// Response to vote request
     VoteResponse { term: u64, vote_granted: bool },
     /// Request to append entries to other nodes
-    AppendRequest { term: u64, leader_id: u64 },
+    AppendEntries { term: u64, leader_id: u64 },
     /// Response to append request
     AppendResponse { term: u64, success: bool },
 }
