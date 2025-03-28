@@ -561,3 +561,80 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
         panic!("Expected an AppendEntries message");
     }
 }
+
+#[tokio::test]
+async fn test_node_append_to_log_and_broadcast_updates_log_andstate_machine() {
+    const NODE_ID: u64 = 0;
+    const TERM: u64 = 1;
+    const COMMAND: &str = "test command";
+    let mut nodes = create_network(1).await;
+    let node = &mut nodes[NODE_ID as usize];
+
+    // transition to leader
+    node.transition_to(NodeState::Leader, TERM);
+
+    // check default values
+    assert_eq!(node.log().len(), 0);
+    assert_eq!(node.state_machine.get_state(), 0);
+
+    // append to log and broadcast
+    node.append_to_log_and_broadcast(COMMAND.to_string()).await.unwrap();
+
+    // check that the log has the new entry
+    assert_eq!(node.log().len(), 1);
+    assert_eq!(node.log()[0].term, TERM);
+    assert_eq!(node.log()[0].command, COMMAND);
+    // check that the state machine value was incremented
+    assert_eq!(node.state_machine.get_state(), 1);
+}
+
+#[tokio::test]
+async fn test_node_append_to_log_and_broadcast_rejects_if_not_leader() {
+    const NODE_ID: u64 = 0;
+    const COMMAND: &str = "test command";
+    let mut nodes = create_network(1).await;
+    let node = &mut nodes[NODE_ID as usize];
+
+    // check default values
+    assert_eq!(node.state(), NodeState::Follower);
+    assert_eq!(node.log().len(), 0);
+    assert_eq!(node.state_machine.get_state(), 0);
+
+    // append to log and broadcast
+    let result = node.append_to_log_and_broadcast(COMMAND.to_string()).await;
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err(), ConsensusError::NotLeader(NODE_ID));
+}
+
+#[tokio::test]
+async fn test_node_append_to_log_and_broadcast_sends_append_entries_to_all_nodes() {
+    const NODE_ID: u64 = 0;
+    const TERM: u64 = 1;
+    const COMMAND: &str = "test command";
+    let mut nodes = create_network(2).await;
+    let (node_1, node_2) = get_two_nodes(&mut nodes);
+
+    // transition node 1 to leader
+    node_1.transition_to(NodeState::Leader, TERM);
+
+    // append to log and broadcast
+    node_1.append_to_log_and_broadcast(COMMAND.to_string()).await.unwrap();
+
+    // check that the log has the new entry
+    assert_eq!(node_1.log().len(), 1);
+    assert_eq!(node_1.log()[0].term, TERM);
+    assert_eq!(node_1.log()[0].command, COMMAND);
+
+    // check that node 2 received the append entries
+    let message = node_2.receive_message().await;
+
+    if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = message {
+        assert_eq!(term, TERM);
+        assert_eq!(leader_id, NODE_ID);
+        assert_eq!(new_entries.len(), node_1.log().len());
+        assert_eq!(new_entries[0].term, TERM);
+        assert_eq!(new_entries[0].command, COMMAND);
+    } else {
+        panic!("Expected an AppendEntries message");
+    }
+}
