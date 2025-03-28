@@ -78,11 +78,10 @@ fn simulate_election(nodes: &mut [Node], candidate_id: u64, candidate_term: u64)
 }
 
 fn simulate_append_entries(nodes: &mut [Node], leader_id: u64) {
-    // Leader appends a new command to its own log.
-    {
-        let leader = nodes.iter_mut().find(|n| n.id() == leader_id).unwrap();
-        leader.append_to_log("command".to_string());
-    }
+    // Leader appends a new command to its own log and broadcasts it to all other
+    // nodes.
+    let leader = nodes.iter_mut().find(|n| n.id() == leader_id).unwrap();
+    leader.append_to_log_and_broadcast("command".to_string());
 
     // Process append entries
     for node in nodes.iter_mut().filter(|n| n.id() != leader_id) {

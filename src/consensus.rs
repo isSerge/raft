@@ -3,7 +3,7 @@ use crate::{
     state_machine::StateMachine,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeState {
     Leader,
     Follower,
@@ -14,6 +14,12 @@ pub enum NodeState {
 pub struct LogEntry {
     pub term: u64,
     pub command: String,
+}
+
+impl LogEntry {
+    pub fn new(term: u64, command: String) -> Self {
+        Self { term, command }
+    }
 }
 
 #[derive(Debug)]
@@ -47,7 +53,7 @@ impl Node {
 
     /// Get the node's current state.
     pub fn state(&self) -> NodeState {
-        self.state.clone()
+        self.state
     }
 
     /// Get the current term.
@@ -61,7 +67,7 @@ impl Node {
     }
 
     /// Get the log.
-    pub fn log(&self) -> &Vec<LogEntry> {
+    pub fn log(&self) -> &[LogEntry] {
         &self.log
     }
 
@@ -72,21 +78,21 @@ impl Node {
 
     /// Transition to a new state.
     pub fn transition_to(&mut self, state: NodeState, term: u64) {
-        // Always update term when seeing a higher term
-        if term > self.current_term {
-            self.current_term = term;
-            self.voted_for = None; // Clear vote when seeing higher term
-        }
-
         match state {
             NodeState::Follower => {
+                if term > self.current_term {
+                    self.current_term = term;
+                    self.voted_for = None;
+                }
                 self.state = NodeState::Follower;
             }
             NodeState::Candidate => {
+                self.current_term = term.max(self.current_term);
                 self.state = NodeState::Candidate;
                 self.voted_for = Some(self.id);
             }
             NodeState::Leader => {
+                self.current_term = term.max(self.current_term);
                 self.state = NodeState::Leader;
                 self.voted_for = Some(self.id);
             }
@@ -94,26 +100,29 @@ impl Node {
     }
 
     /// Handle a request vote from a candidate
-    pub fn handle_request_vote(&mut self, candidate_term: u64, candidate_id: u64) {
+    pub fn handle_request_vote(
+        &mut self,
+        candidate_term: u64,
+        candidate_id: u64,
+    ) -> Result<(), MessagingError> {
         // 1. If candidate_term is older than current_term, reject
         if candidate_term < self.current_term {
-            self.send_vote_response(candidate_id, false);
-        } else {
-            // 2. If candidate_term is greater than current_term, convert to follower and
-            //    reset
-            // voted_for
-            if candidate_term > self.current_term {
-                self.transition_to(NodeState::Follower, candidate_term);
-            }
-
-            // 3. Vote if we haven't voted yet.
-            if self.voted_for.is_none() || self.voted_for.unwrap() == candidate_id {
-                self.voted_for = Some(candidate_id);
-                self.send_vote_response(candidate_id, true);
-            } else {
-                self.send_vote_response(candidate_id, false);
-            }
+            return self.send_vote_response(candidate_id, false);
         }
+        // 2. If candidate_term is greater than current_term, convert to follower and
+        //    reset
+        // voted_for
+        if candidate_term > self.current_term {
+            self.transition_to(NodeState::Follower, candidate_term);
+        }
+
+        // 3. Vote if we haven't voted yet.
+        let can_vote = self.voted_for.is_none_or(|voted_for| voted_for == candidate_id);
+        if can_vote {
+            self.voted_for = Some(candidate_id);
+        }
+
+        self.send_vote_response(candidate_id, can_vote)
     }
 
     /// Handle an AppendEntries request from a leader
@@ -122,11 +131,10 @@ impl Node {
         leader_term: u64,
         leader_id: u64,
         new_entries: Vec<LogEntry>,
-    ) {
+    ) -> Result<(), MessagingError> {
         // If leader_term is older than current_term, reject
         if leader_term < self.current_term {
-            self.send_append_response(leader_id, false);
-            return;
+            return self.send_append_response(leader_id, false);
         }
         // If leader_term is equal or greater than current_term:
         // 1. convert to follower
@@ -139,18 +147,19 @@ impl Node {
         self.state_machine.apply(new_entries.len() as u64);
 
         // 4. send response to leader
-        self.send_append_response(leader_id, true);
+        self.send_append_response(leader_id, true)
     }
 
-    pub fn append_to_log(&mut self, command: String) {
+    pub fn append_to_log_and_broadcast(&mut self, command: String) {
         // Ensure that only a leader can append a new command.
         if !self.is_leader() {
+            // TODO: Return an error.
             println!("Node {} is not a leader. Cannot append new command.", self.id);
             return;
         }
 
         // Append the new entry to the log.
-        let new_entry = LogEntry { term: self.current_term, command };
+        let new_entry = LogEntry::new(self.current_term, command);
         self.log.push(new_entry.clone());
         println!("Leader Node {} appended new log entry: {:?}", self.id, new_entry);
 
