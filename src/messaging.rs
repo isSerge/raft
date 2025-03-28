@@ -95,7 +95,8 @@ impl NodeMessenger {
 
     // Receives a message from this node's own queue.
     pub fn receive(&self) -> Result<Message, MessagingError> {
-        self.receiver.lock().unwrap().recv().map_err(|_| MessagingError::ReceiveError)
+        let receiver = self.receiver.lock().map_err(|_| MessagingError::MutexError)?;
+        receiver.try_recv().map_err(|_| MessagingError::ReceiveError)
     }
 
     /// Sends a message to a specific node using the global Network.
