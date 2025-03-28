@@ -3,6 +3,15 @@ use crate::{
     state_machine::StateMachine,
 };
 
+#[derive(Debug, thiserror::Error)]
+pub enum ConsensusError {
+    #[error("Node {0} is not a leader")]
+    NotLeader(u64),
+    #[error("Message handling failed: {0}")]
+    Transport(#[from] MessagingError),
+    // TODO: add log inconsistency error
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeState {
     Leader,
@@ -104,14 +113,13 @@ impl Node {
         &mut self,
         candidate_term: u64,
         candidate_id: u64,
-    ) -> Result<(), MessagingError> {
+    ) -> Result<(), ConsensusError> {
         // 1. If candidate_term is older than current_term, reject
         if candidate_term < self.current_term {
             return self.send_vote_response(candidate_id, false);
         }
         // 2. If candidate_term is greater than current_term, convert to follower and
-        //    reset
-        // voted_for
+        //    reset voted_for
         if candidate_term > self.current_term {
             self.transition_to(NodeState::Follower, candidate_term);
         }
@@ -131,7 +139,7 @@ impl Node {
         leader_term: u64,
         leader_id: u64,
         new_entries: Vec<LogEntry>,
-    ) -> Result<(), MessagingError> {
+    ) -> Result<(), ConsensusError> {
         // If leader_term is older than current_term, reject
         if leader_term < self.current_term {
             return self.send_append_response(leader_id, false);
@@ -150,12 +158,10 @@ impl Node {
         self.send_append_response(leader_id, true)
     }
 
-    pub fn append_to_log_and_broadcast(&mut self, command: String) {
+    pub fn append_to_log_and_broadcast(&mut self, command: String) -> Result<(), ConsensusError> {
         // Ensure that only a leader can append a new command.
         if !self.is_leader() {
-            // TODO: Return an error.
-            println!("Node {} is not a leader. Cannot append new command.", self.id);
-            return;
+            return Err(ConsensusError::NotLeader(self.id));
         }
 
         // Append the new entry to the log.
@@ -168,26 +174,23 @@ impl Node {
         println!("Leader Node {} updated its own state machine.", self.id);
 
         // Broadcast the new log entry to all other nodes.
-        let result = self.broadcast_append_entries(vec![new_entry]);
-        if let Err(e) = result {
-            println!("Node {} received error: {:?}", self.id, e);
-        }
+        self.broadcast_append_entries(vec![new_entry])
     }
 
     /// Receive a message from the network.
-    pub fn receive_message(&mut self) -> Result<Message, MessagingError> {
-        self.messenger.receive()
+    pub fn receive_message(&mut self) -> Result<Message, ConsensusError> {
+        self.messenger.receive().map_err(ConsensusError::Transport)
     }
 
     /// Broadcast a message to all other nodes.
-    fn broadcast(&self, message: Message) -> Result<(), MessagingError> {
-        self.messenger.broadcast(self.id, message)
+    fn broadcast(&self, message: Message) -> Result<(), ConsensusError> {
+        self.messenger.broadcast(self.id, message).map_err(ConsensusError::Transport)
     }
 
     /// Send an AppendResponse to a leader.
-    fn send_append_response(&self, leader_id: u64, success: bool) -> Result<(), MessagingError> {
+    fn send_append_response(&self, leader_id: u64, success: bool) -> Result<(), ConsensusError> {
         let msg = Message::AppendResponse { term: self.current_term, success };
-        self.messenger.send_to(self.id, leader_id, msg)
+        self.messenger.send_to(self.id, leader_id, msg).map_err(ConsensusError::Transport)
     }
 
     /// Send a VoteResponse to a candidate.
@@ -195,12 +198,12 @@ impl Node {
         &self,
         candidate_id: u64,
         vote_granted: bool,
-    ) -> Result<(), MessagingError> {
+    ) -> Result<(), ConsensusError> {
         let msg = Message::VoteResponse { term: self.current_term, vote_granted };
-        self.messenger.send_to(self.id, candidate_id, msg)
+        self.messenger.send_to(self.id, candidate_id, msg).map_err(ConsensusError::Transport)
     }
 
-    pub fn broadcast_vote_request(&self) -> Result<(), MessagingError> {
+    pub fn broadcast_vote_request(&self) -> Result<(), ConsensusError> {
         let msg = Message::VoteRequest { term: self.current_term, candidate_id: self.id };
         self.broadcast(msg)
     }
@@ -208,7 +211,7 @@ impl Node {
     pub fn broadcast_append_entries(
         &self,
         new_entries: Vec<LogEntry>,
-    ) -> Result<(), MessagingError> {
+    ) -> Result<(), ConsensusError> {
         let msg =
             Message::AppendEntries { term: self.current_term, leader_id: self.id, new_entries };
         self.broadcast(msg)
