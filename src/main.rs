@@ -1,55 +1,34 @@
 mod consensus;
 mod messaging;
 mod state_machine;
-
+mod utils;
 use std::sync::{Arc, Mutex};
 
 use consensus::{ConsensusError, Node, NodeState};
 use messaging::{Message, Network, NodeMessenger};
 use state_machine::StateMachine;
-
-fn print_node_state(nodes: &[Node]) {
-    for node in nodes {
-        println!(
-            "Node {}: state: {:?}, term: {}, voted_for: {:?}, log: {:?}, state_machine: {:?}",
-            node.id(),
-            node.state(),
-            node.current_term(),
-            node.voted_for(),
-            node.log(),
-            node.state_machine.get_state()
-        );
-    }
-}
+use utils::{partition_nodes_mut, print_node_state};
 
 fn simulate_election(nodes: &mut [Node], candidate_id: u64) -> Result<(), ConsensusError> {
-    // 1. Find candidate position
-    let candidate_idx = nodes
-        .iter()
-        .position(|n| n.id() == candidate_id)
-        .ok_or(ConsensusError::NodeNotFound(candidate_id))?;
+    // Get nodes count first to avoid mutable borrow issues
+    let nodes_count = nodes.len();
 
-    // 2. Process candidate in isolated scope
-    let election_term = {
-        let candidate = &mut nodes[candidate_idx];
-        if candidate.state() != NodeState::Follower {
-            return Err(ConsensusError::NotFollower(candidate_id));
-        }
-        let term = candidate.current_term() + 1;
-        candidate.transition_to(NodeState::Candidate, term);
-        candidate.broadcast_vote_request()?;
-        term
-    };
+    // Get candidate and other nodes
+    let (candidate, others) = partition_nodes_mut(nodes, candidate_id)?;
 
-    // 3. Calculate majority needed
-    let majority_needed = nodes.len() / 2 + 1;
+    // 1. Transition to candidate state and broadcast vote request
+    if candidate.state() != NodeState::Follower {
+        return Err(ConsensusError::NotFollower(candidate_id));
+    }
+    let election_term = candidate.current_term() + 1;
+    candidate.transition_to(NodeState::Candidate, election_term);
+    candidate.broadcast_vote_request()?;
+
+    // 2. Calculate majority needed
+    let majority_needed = nodes_count / 2 + 1;
     let mut votes_received = 1; // self-vote
 
-    // 4. Process other nodes
-    let (left, right) = nodes.split_at_mut(candidate_idx);
-    let (_, right) = right.split_first_mut().unwrap(); // Skip candidate
-    let others = left.iter_mut().chain(right.iter_mut());
-
+    // 3. Process other nodes
     for node in others {
         if let Ok(Message::VoteRequest { term, candidate_id }) = node.receive_message() {
             node.handle_request_vote(term, candidate_id)?;
@@ -59,8 +38,7 @@ fn simulate_election(nodes: &mut [Node], candidate_id: u64) -> Result<(), Consen
         }
     }
 
-    // 5. Handle election outcome
-    let candidate = &mut nodes[candidate_idx];
+    // 4. Handle election outcome
     if votes_received >= majority_needed {
         candidate.transition_to(NodeState::Leader, election_term);
         println!(
@@ -80,26 +58,17 @@ fn simulate_election(nodes: &mut [Node], candidate_id: u64) -> Result<(), Consen
 }
 
 fn simulate_append_entries(nodes: &mut [Node], leader_id: u64) -> Result<(), ConsensusError> {
-    let leader_idx = nodes
-        .iter()
-        .position(|n| n.id() == leader_id)
-        .ok_or(ConsensusError::NodeNotFound(leader_id))?;
+    let (leader, others) = partition_nodes_mut(nodes, leader_id)?;
 
     // Leader appends a new command to its own log and broadcasts it to all other
     // nodes.
-    let leader = &mut nodes[leader_idx];
     leader.append_to_log_and_broadcast("command".to_string())?;
 
     // Process append entries
-    for node in nodes.iter_mut().filter(|n| n.id() != leader_id) {
-        match node.receive_message() {
-            Ok(Message::AppendEntries { term, leader_id, new_entries }) => {
-                node.handle_append_entries(term, leader_id, new_entries)?;
-            }
-            Err(e) => {
-                println!("Node {} received error: {:?}", node.id(), e);
-            }
-            _ => {} // Ignore other message types
+    for node in others {
+        if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = node.receive_message()
+        {
+            node.handle_append_entries(term, leader_id, new_entries)?;
         }
     }
 
