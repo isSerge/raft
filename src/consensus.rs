@@ -159,14 +159,7 @@ impl Node {
         println!("Leader Node {} updated its own state machine.", self.id);
 
         // Broadcast the new log entry to all other nodes.
-        let result = self.messenger.broadcast(
-            self.id,
-            Message::AppendEntries {
-                term: self.current_term,
-                leader_id: self.id,
-                new_entries: vec![new_entry],
-            },
-        );
+        let result = self.broadcast_append_entries(vec![new_entry]);
         if let Err(e) = result {
             println!("Node {} received error: {:?}", self.id, e);
         }
@@ -178,7 +171,7 @@ impl Node {
     }
 
     /// Broadcast a message to all other nodes.
-    pub fn broadcast(&self, message: Message) -> Result<(), MessagingError> {
+    fn broadcast(&self, message: Message) -> Result<(), MessagingError> {
         self.messenger.broadcast(self.id, message)
     }
 
@@ -196,5 +189,19 @@ impl Node {
     ) -> Result<(), MessagingError> {
         let msg = Message::VoteResponse { term: self.current_term, vote_granted };
         self.messenger.send_to(self.id, candidate_id, msg)
+    }
+
+    pub fn broadcast_vote_request(&self) -> Result<(), MessagingError> {
+        let msg = Message::VoteRequest { term: self.current_term, candidate_id: self.id };
+        self.broadcast(msg)
+    }
+
+    pub fn broadcast_append_entries(
+        &self,
+        new_entries: Vec<LogEntry>,
+    ) -> Result<(), MessagingError> {
+        let msg =
+            Message::AppendEntries { term: self.current_term, leader_id: self.id, new_entries };
+        self.broadcast(msg)
     }
 }

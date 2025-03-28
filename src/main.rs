@@ -34,7 +34,7 @@ fn simulate_election(nodes: &mut [Node], candidate_id: u64, candidate_term: u64)
     // Candidate votes for itself before broadcasting the VoteRequest.
     candidate.transition_to(NodeState::Candidate, candidate_term);
     // Candidate broadcasts a VoteRequest to all other nodes.
-    let result = candidate.broadcast(Message::VoteRequest { term: candidate_term, candidate_id });
+    let result = candidate.broadcast_vote_request();
     if let Err(e) = result {
         println!("Node {} received error: {:?}", candidate_id, e);
     }
