@@ -7,6 +7,8 @@ use crate::{
 pub enum ConsensusError {
     #[error("Node {0} is not a leader")]
     NotLeader(u64),
+    #[error("Node {0} is not a candidate")]
+    NotCandidate(u64),
     #[error("Message handling failed: {0}")]
     Transport(#[from] MessagingError),
     // TODO: add log inconsistency error
@@ -78,11 +80,6 @@ impl Node {
     /// Get the log.
     pub fn log(&self) -> &[LogEntry] {
         &self.log
-    }
-
-    /// Check if the node is a leader.
-    pub fn is_leader(&self) -> bool {
-        self.state == NodeState::Leader
     }
 
     /// Transition to a new state.
@@ -160,7 +157,7 @@ impl Node {
 
     pub fn append_to_log_and_broadcast(&mut self, command: String) -> Result<(), ConsensusError> {
         // Ensure that only a leader can append a new command.
-        if !self.is_leader() {
+        if !matches!(self.state, NodeState::Leader) {
             return Err(ConsensusError::NotLeader(self.id));
         }
 
@@ -204,6 +201,10 @@ impl Node {
     }
 
     pub fn broadcast_vote_request(&self) -> Result<(), ConsensusError> {
+        if !matches!(self.state, NodeState::Candidate) {
+            return Err(ConsensusError::NotCandidate(self.id));
+        }
+
         let msg = Message::VoteRequest { term: self.current_term, candidate_id: self.id };
         self.broadcast(msg)
     }
