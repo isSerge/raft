@@ -34,13 +34,19 @@ fn simulate_election(nodes: &mut [Node], candidate_id: u64, candidate_term: u64)
     // Candidate votes for itself before broadcasting the VoteRequest.
     candidate.transition_to(NodeState::Candidate, candidate_term);
     // Candidate broadcasts a VoteRequest to all other nodes.
-    candidate.broadcast(Message::VoteRequest { term: candidate_term, candidate_id });
+    let result = candidate.broadcast(Message::VoteRequest { term: candidate_term, candidate_id });
+    if let Err(e) = result {
+        println!("Node {} received error: {:?}", candidate_id, e);
+    }
 
     // Process responses from other nodes
     for node in nodes.iter_mut().filter(|n| n.id() != candidate_id) {
         match node.receive_message() {
-            Message::VoteRequest { term, candidate_id } => {
+            Ok(Message::VoteRequest { term, candidate_id }) => {
                 node.handle_request_vote(term, candidate_id);
+            }
+            Err(e) => {
+                println!("Node {} received error: {:?}", node.id(), e);
             }
             _ => {} // Ignore other message types
         }
@@ -81,8 +87,11 @@ fn simulate_append_entries(nodes: &mut [Node], leader_id: u64) {
     // Process append entries
     for node in nodes.iter_mut().filter(|n| n.id() != leader_id) {
         match node.receive_message() {
-            Message::AppendEntries { term, leader_id, new_entries } => {
+            Ok(Message::AppendEntries { term, leader_id, new_entries }) => {
                 node.handle_append_entries(term, leader_id, new_entries);
+            }
+            Err(e) => {
+                println!("Node {} received error: {:?}", node.id(), e);
             }
             _ => {} // Ignore other message types
         }

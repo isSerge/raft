@@ -1,5 +1,5 @@
 use crate::{
-    messaging::{Message, NodeMessenger},
+    messaging::{Message, MessagingError, NodeMessenger},
     state_machine::StateMachine,
 };
 
@@ -159,7 +159,7 @@ impl Node {
         println!("Leader Node {} updated its own state machine.", self.id);
 
         // Broadcast the new log entry to all other nodes.
-        self.messenger.broadcast(
+        let result = self.messenger.broadcast(
             self.id,
             Message::AppendEntries {
                 term: self.current_term,
@@ -167,27 +167,34 @@ impl Node {
                 new_entries: vec![new_entry],
             },
         );
+        if let Err(e) = result {
+            println!("Node {} received error: {:?}", self.id, e);
+        }
     }
 
     /// Receive a message from the network.
-    pub fn receive_message(&mut self) -> Message {
+    pub fn receive_message(&mut self) -> Result<Message, MessagingError> {
         self.messenger.receive()
     }
 
     /// Broadcast a message to all other nodes.
-    pub fn broadcast(&self, message: Message) {
-        self.messenger.broadcast(self.id, message);
+    pub fn broadcast(&self, message: Message) -> Result<(), MessagingError> {
+        self.messenger.broadcast(self.id, message)
     }
 
     /// Send an AppendResponse to a leader.
-    fn send_append_response(&self, leader_id: u64, success: bool) {
+    fn send_append_response(&self, leader_id: u64, success: bool) -> Result<(), MessagingError> {
         let msg = Message::AppendResponse { term: self.current_term, success };
-        self.messenger.send_to(self.id, leader_id, msg);
+        self.messenger.send_to(self.id, leader_id, msg)
     }
 
     /// Send a VoteResponse to a candidate.
-    fn send_vote_response(&self, candidate_id: u64, vote_granted: bool) {
+    fn send_vote_response(
+        &self,
+        candidate_id: u64,
+        vote_granted: bool,
+    ) -> Result<(), MessagingError> {
         let msg = Message::VoteResponse { term: self.current_term, vote_granted };
-        self.messenger.send_to(self.id, candidate_id, msg);
+        self.messenger.send_to(self.id, candidate_id, msg)
     }
 }
