@@ -27,6 +27,16 @@ async fn create_network(number_of_nodes: usize) -> Vec<Node> {
     nodes
 }
 
+/// Returns mutable references to the first two nodes in the slice.
+/// Panics if there are fewer than two nodes.
+fn get_two_nodes(nodes: &mut [Node]) -> (&mut Node, &mut Node) {
+    if let [node1, node2, ..] = nodes {
+        (node1, node2)
+    } else {
+        panic!("Expected at least 2 nodes");
+    }
+}
+
 #[tokio::test]
 async fn test_node_transition_to_candidate_and_vote_for_self() {
     const TERM: u64 = 1;
@@ -113,27 +123,25 @@ async fn test_node_broadcast_append_entries_sends_message_to_all_nodes() {
     let mut nodes = create_network(2).await;
 
     // get the nodes
-    if let [node_1, node_2] = &mut nodes.as_mut_slice() {
-        // transition node 1 to leader
-        node_1.transition_to(NodeState::Leader, TERM);
+    let (node_1, node_2) = get_two_nodes(&mut nodes);
 
-        // broadcast append entries
-        let log_entry = LogEntry::new(TERM, "test".to_string());
-        node_1.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
+    // transition node 1 to leader
+    node_1.transition_to(NodeState::Leader, TERM);
 
-        // node 2 receives append entries from node 1
-        let request_message = node_2.receive_message().await;
+    // broadcast append entries
+    let log_entry = LogEntry::new(TERM, "test".to_string());
+    node_1.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
 
-        // check that the message is an append entries request
-        if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = request_message {
-            assert_eq!(term, TERM);
-            assert_eq!(leader_id, NODE_ID);
-            assert_eq!(new_entries, vec![log_entry]);
-        } else {
-            panic!("Expected an AppendEntries message");
-        }
+    // node 2 receives append entries from node 1
+    let request_message = node_2.receive_message().await;
+
+    // check that the message is an append entries request
+    if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = request_message {
+        assert_eq!(term, TERM);
+        assert_eq!(leader_id, NODE_ID);
+        assert_eq!(new_entries, vec![log_entry]);
     } else {
-        panic!("Expected 2 nodes");
+        panic!("Expected an AppendEntries message");
     }
 }
 
@@ -144,26 +152,24 @@ async fn test_node_broadcast_vote_request_sends_message_to_all_nodes() {
     let mut nodes = create_network(2).await;
 
     // get the nodes
-    if let [node_1, node_2] = &mut nodes.as_mut_slice() {
-        // transition node 1 to candidate
-        node_1.transition_to(NodeState::Candidate, TERM);
+    let (node_1, node_2) = get_two_nodes(&mut nodes);
 
-        // broadcast vote request
-        let result = node_1.broadcast_vote_request().await;
-        assert!(result.is_ok());
+    // transition node 1 to candidate
+    node_1.transition_to(NodeState::Candidate, TERM);
 
-        // receive message from node 2
-        let message = node_2.receive_message().await;
+    // broadcast vote request
+    let result = node_1.broadcast_vote_request().await;
+    assert!(result.is_ok());
 
-        // check that the message is a vote request
-        if let Ok(Message::VoteRequest { term, candidate_id }) = message {
-            assert_eq!(term, TERM);
-            assert_eq!(candidate_id, NODE_ID_1);
-        } else {
-            panic!("Expected a VoteRequest message");
-        }
+    // receive message from node 2
+    let message = node_2.receive_message().await;
+
+    // check that the message is a vote request
+    if let Ok(Message::VoteRequest { term, candidate_id }) = message {
+        assert_eq!(term, TERM);
+        assert_eq!(candidate_id, NODE_ID_1);
     } else {
-        panic!("Expected 2 nodes");
+        panic!("Expected a VoteRequest message");
     }
 }
 
@@ -173,35 +179,33 @@ async fn test_node_send_append_response() {
     let mut nodes = create_network(2).await;
 
     // get the nodes
-    if let [node_1, node_2] = &mut nodes.as_mut_slice() {
-        // transition node 1 to leader
-        node_1.transition_to(NodeState::Leader, TERM);
+    let (node_1, node_2) = get_two_nodes(&mut nodes);
 
-        // broadcast append entries
-        let log_entry = LogEntry::new(TERM, "test".to_string());
-        node_1.broadcast_append_entries(vec![log_entry]).await.unwrap();
+    // transition node 1 to leader
+    node_1.transition_to(NodeState::Leader, TERM);
 
-        // node 2 receives append entries from node 1
-        let request_message = node_2.receive_message().await;
+    // broadcast append entries
+    let log_entry = LogEntry::new(TERM, "test".to_string());
+    node_1.broadcast_append_entries(vec![log_entry]).await.unwrap();
 
-        // handle append entries
-        if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = request_message {
-            node_2.handle_append_entries(term, leader_id, &new_entries).await.unwrap();
-        } else {
-            panic!("Expected an AppendEntries message");
-        }
+    // node 2 receives append entries from node 1
+    let request_message = node_2.receive_message().await;
 
-        // node 1 receives append response from node 2
-        let response_message = node_1.receive_message().await;
-
-        if let Ok(Message::AppendResponse { term, success }) = response_message {
-            assert_eq!(term, TERM);
-            assert!(success);
-        } else {
-            panic!("Expected an AppendResponse message");
-        }
+    // handle append entries
+    if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = request_message {
+        node_2.handle_append_entries(term, leader_id, &new_entries).await.unwrap();
     } else {
-        panic!("Expected 2 nodes");
+        panic!("Expected an AppendEntries message");
+    }
+
+    // node 1 receives append response from node 2
+    let response_message = node_1.receive_message().await;
+
+    if let Ok(Message::AppendResponse { term, success }) = response_message {
+        assert_eq!(term, TERM);
+        assert!(success);
+    } else {
+        panic!("Expected an AppendResponse message");
     }
 }
 
@@ -211,35 +215,33 @@ async fn test_node_send_vote_response() {
     let mut nodes = create_network(2).await;
 
     // get the nodes
-    if let [node_1, node_2] = &mut nodes.as_mut_slice() {
-        // transition node 1 to candidate
-        node_1.transition_to(NodeState::Candidate, TERM);
+    let (node_1, node_2) = get_two_nodes(&mut nodes);
 
-        // broadcast vote request
-        let result = node_1.broadcast_vote_request().await;
-        assert!(result.is_ok());
+    // transition node 1 to candidate
+    node_1.transition_to(NodeState::Candidate, TERM);
 
-        // receive message from node 2
-        let message = node_2.receive_message().await;
+    // broadcast vote request
+    let result = node_1.broadcast_vote_request().await;
+    assert!(result.is_ok());
 
-        // handle vote request
-        if let Ok(Message::VoteRequest { term, candidate_id }) = message {
-            node_2.handle_request_vote(term, candidate_id).await.unwrap();
-        } else {
-            panic!("Expected a VoteRequest message");
-        }
+    // receive message from node 2
+    let message = node_2.receive_message().await;
 
-        // node 1 receives vote response from node 2
-        let response_message = node_1.receive_message().await;
-
-        if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
-            assert_eq!(term, TERM);
-            assert!(vote_granted);
-        } else {
-            panic!("Expected a VoteResponse message");
-        }
+    // handle vote request
+    if let Ok(Message::VoteRequest { term, candidate_id }) = message {
+        node_2.handle_request_vote(term, candidate_id).await.unwrap();
     } else {
-        panic!("Expected 2 nodes");
+        panic!("Expected a VoteRequest message");
+    }
+
+    // node 1 receives vote response from node 2
+    let response_message = node_1.receive_message().await;
+
+    if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+        assert_eq!(term, TERM);
+        assert!(vote_granted);
+    } else {
+        panic!("Expected a VoteResponse message");
     }
 }
 
@@ -250,35 +252,35 @@ async fn test_node_handle_request_vote_rejects_older_term() {
     let mut nodes = create_network(2).await;
 
     // get the nodes
-    if let [node_1, node_2] = &mut nodes.as_mut_slice() {
-        // transition node 1 to candidate
-        node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
+    let (node_1, node_2) = get_two_nodes(&mut nodes);
 
-        // set higher term on node 2
-        node_2.transition_to(NodeState::Follower, NODE_2_TERM);
+    // transition node 1 to candidate
+    node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
 
-        // node 1 broadcasts vote request
-        let result = node_1.broadcast_vote_request().await;
-        assert!(result.is_ok());
+    // set higher term on node 2
+    node_2.transition_to(NodeState::Follower, NODE_2_TERM);
 
-        // node 2 receives vote request from node 1
-        let message = node_2.receive_message().await;
+    // node 1 broadcasts vote request
+    let result = node_1.broadcast_vote_request().await;
+    assert!(result.is_ok());
 
-        // handle vote request from node 1
-        if let Ok(Message::VoteRequest { term, candidate_id }) = message {
-            node_2.handle_request_vote(term, candidate_id).await.unwrap();
+    // node 2 receives vote request from node 1
+    let message = node_2.receive_message().await;
 
-            // check that the vote response is a rejection
-            let response_message = node_1.receive_message().await;
-            if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
-                assert_eq!(term, NODE_2_TERM);
-                assert!(!vote_granted);
-            } else {
-                panic!("Expected a VoteResponse message");
-            }
+    // handle vote request from node 1
+    if let Ok(Message::VoteRequest { term, candidate_id }) = message {
+        node_2.handle_request_vote(term, candidate_id).await.unwrap();
+
+        // check that the vote response is a rejection
+        let response_message = node_1.receive_message().await;
+        if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+            assert_eq!(term, NODE_2_TERM);
+            assert!(!vote_granted);
         } else {
-            panic!("Expected a VoteRequest message");
+            panic!("Expected a VoteResponse message");
         }
+    } else {
+        panic!("Expected a VoteRequest message");
     }
 }
 
@@ -289,35 +291,35 @@ async fn test_node_handle_request_vote_accepts_newer_term() {
     let mut nodes = create_network(2).await;
 
     // get the nodes
-    if let [node_1, node_2] = &mut nodes.as_mut_slice() {
-        // transition node 1 to candidate
-        node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
+    let (node_1, node_2) = get_two_nodes(&mut nodes);
 
-        // set lower term on node 2
-        node_2.transition_to(NodeState::Follower, NODE_2_TERM);
+    // transition node 1 to candidate
+    node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
 
-        // node 1 broadcasts vote request
-        let result = node_1.broadcast_vote_request().await;
-        assert!(result.is_ok());
+    // set lower term on node 2
+    node_2.transition_to(NodeState::Follower, NODE_2_TERM);
 
-        // node 2 receives vote request from node 1
-        let message = node_2.receive_message().await;
+    // node 1 broadcasts vote request
+    let result = node_1.broadcast_vote_request().await;
+    assert!(result.is_ok());
 
-        // handle vote request from node 1
-        if let Ok(Message::VoteRequest { term, candidate_id }) = message {
-            node_2.handle_request_vote(term, candidate_id).await.unwrap();
+    // node 2 receives vote request from node 1
+    let message = node_2.receive_message().await;
 
-            // check that the vote response is a rejection
-            let response_message = node_1.receive_message().await;
-            if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
-                assert_eq!(term, NODE_1_TERM);
-                assert!(vote_granted);
-            } else {
-                panic!("Expected a VoteResponse message");
-            }
+    // handle vote request from node 1
+    if let Ok(Message::VoteRequest { term, candidate_id }) = message {
+        node_2.handle_request_vote(term, candidate_id).await.unwrap();
+
+        // check that the vote response is a rejection
+        let response_message = node_1.receive_message().await;
+        if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+            assert_eq!(term, NODE_1_TERM);
+            assert!(vote_granted);
         } else {
-            panic!("Expected a VoteRequest message");
+            panic!("Expected a VoteResponse message");
         }
+    } else {
+        panic!("Expected a VoteRequest message");
     }
 }
 
@@ -328,35 +330,35 @@ async fn test_node_handle_request_vote_accepts_equal_term() {
     let mut nodes = create_network(2).await;
 
     // get the nodes
-    if let [node_1, node_2] = &mut nodes.as_mut_slice() {
-        // transition node 1 to candidate
-        node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
+    let (node_1, node_2) = get_two_nodes(&mut nodes);
 
-        // set lower term on node 2
-        node_2.transition_to(NodeState::Follower, NODE_2_TERM);
+    // transition node 1 to candidate
+    node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
 
-        // node 1 broadcasts vote request
-        let result = node_1.broadcast_vote_request().await;
-        assert!(result.is_ok());
+    // set lower term on node 2
+    node_2.transition_to(NodeState::Follower, NODE_2_TERM);
 
-        // node 2 receives vote request from node 1
-        let message = node_2.receive_message().await;
+    // node 1 broadcasts vote request
+    let result = node_1.broadcast_vote_request().await;
+    assert!(result.is_ok());
 
-        // handle vote request from node 1
-        if let Ok(Message::VoteRequest { term, candidate_id }) = message {
-            node_2.handle_request_vote(term, candidate_id).await.unwrap();
+    // node 2 receives vote request from node 1
+    let message = node_2.receive_message().await;
 
-            // check that the vote response is a rejection
-            let response_message = node_1.receive_message().await;
-            if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
-                assert_eq!(term, NODE_1_TERM);
-                assert!(vote_granted);
-            } else {
-                panic!("Expected a VoteResponse message");
-            }
+    // handle vote request from node 1
+    if let Ok(Message::VoteRequest { term, candidate_id }) = message {
+        node_2.handle_request_vote(term, candidate_id).await.unwrap();
+
+        // check that the vote response is a rejection
+        let response_message = node_1.receive_message().await;
+        if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+            assert_eq!(term, NODE_1_TERM);
+            assert!(vote_granted);
         } else {
-            panic!("Expected a VoteRequest message");
+            panic!("Expected a VoteResponse message");
         }
+    } else {
+        panic!("Expected a VoteRequest message");
     }
 }
 
@@ -367,41 +369,39 @@ async fn test_node_handle_request_vote_rejects_if_already_voted() {
     let mut nodes = create_network(2).await;
 
     // get the nodes
-    if let [node_1, node_2] = &mut nodes.as_mut_slice() {
-        // transition node 1 to candidate
-        node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
+    let (node_1, node_2) = get_two_nodes(&mut nodes);
 
-        // transition node 2 to follower
-        node_2.transition_to(NodeState::Candidate, NODE_2_TERM);
+    // transition node 1 to candidate
+    node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
 
-        // both should have same term and self as voted_for
-        assert_eq!(node_1.voted_for(), Some(node_1.id()));
-        assert_eq!(node_2.voted_for(), Some(node_2.id()));
+    // transition node 2 to follower
+    node_2.transition_to(NodeState::Candidate, NODE_2_TERM);
 
-        // node 1 broadcasts vote request
-        let result = node_1.broadcast_vote_request().await;
-        assert!(result.is_ok());
+    // both should have same term and self as voted_for
+    assert_eq!(node_1.voted_for(), Some(node_1.id()));
+    assert_eq!(node_2.voted_for(), Some(node_2.id()));
 
-        // node 2 receives vote request from node 1
-        let message = node_2.receive_message().await;
+    // node 1 broadcasts vote request
+    let result = node_1.broadcast_vote_request().await;
+    assert!(result.is_ok());
 
-        // handle vote request from node 1
-        if let Ok(Message::VoteRequest { term, candidate_id }) = message {
-            node_2.handle_request_vote(term, candidate_id).await.unwrap();
+    // node 2 receives vote request from node 1
+    let message = node_2.receive_message().await;
 
-            // check that the vote response is a rejection
-            let response_message = node_1.receive_message().await;
-            if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
-                assert_eq!(term, NODE_1_TERM);
-                assert!(!vote_granted);
-            } else {
-                panic!("Expected a VoteResponse message");
-            }
+    // handle vote request from node 1
+    if let Ok(Message::VoteRequest { term, candidate_id }) = message {
+        node_2.handle_request_vote(term, candidate_id).await.unwrap();
+
+        // check that the vote response is a rejection
+        let response_message = node_1.receive_message().await;
+        if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+            assert_eq!(term, NODE_1_TERM);
+            assert!(!vote_granted);
         } else {
-            panic!("Expected a VoteRequest message");
+            panic!("Expected a VoteResponse message");
         }
     } else {
-        panic!("Expected 2 nodes");
+        panic!("Expected a VoteRequest message");
     }
 }
 
@@ -411,39 +411,153 @@ async fn test_node_handle_request_vote_accepts_if_not_voted() {
     let mut nodes = create_network(2).await;
 
     // get the nodes
-    if let [node_1, node_2] = &mut nodes.as_mut_slice() {
-        // transition node 1 to candidate
-        node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
+    let (node_1, node_2) = get_two_nodes(&mut nodes);
 
-        // node 1 should have self as voted_for
-        assert_eq!(node_1.voted_for(), Some(node_1.id()));
+    // transition node 1 to candidate
+    node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
 
-        // node 2 should not have voted yet
-        assert_eq!(node_2.voted_for(), None);
+    // node 1 should have self as voted_for
+    assert_eq!(node_1.voted_for(), Some(node_1.id()));
 
-        // node 1 broadcasts vote request
-        let result = node_1.broadcast_vote_request().await;
-        assert!(result.is_ok());
+    // node 2 should not have voted yet
+    assert_eq!(node_2.voted_for(), None);
 
-        // node 2 receives vote request from node 1
-        let message = node_2.receive_message().await;
+    // node 1 broadcasts vote request
+    let result = node_1.broadcast_vote_request().await;
+    assert!(result.is_ok());
 
-        // handle vote request from node 1
-        if let Ok(Message::VoteRequest { term, candidate_id }) = message {
-            node_2.handle_request_vote(term, candidate_id).await.unwrap();
+    // node 2 receives vote request from node 1
+    let message = node_2.receive_message().await;
 
-            // check that the vote response is a rejection
-            let response_message = node_1.receive_message().await;
-            if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
-                assert_eq!(term, NODE_1_TERM);
-                assert!(vote_granted);
-            } else {
-                panic!("Expected a VoteResponse message");
-            }
+    // handle vote request from node 1
+    if let Ok(Message::VoteRequest { term, candidate_id }) = message {
+        node_2.handle_request_vote(term, candidate_id).await.unwrap();
+
+        // check that the vote response is a rejection
+        let response_message = node_1.receive_message().await;
+        if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+            assert_eq!(term, NODE_1_TERM);
+            assert!(vote_granted);
         } else {
-            panic!("Expected a VoteRequest message");
+            panic!("Expected a VoteResponse message");
         }
     } else {
-        panic!("Expected 2 nodes");
+        panic!("Expected a VoteRequest message");
+    }
+}
+
+#[tokio::test]
+async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
+    const NODE_1_TERM: u64 = 10;
+    const NODE_2_TERM: u64 = NODE_1_TERM + 1; // higher term
+    let mut nodes = create_network(2).await;
+
+    // get the nodes
+    let (node_1, node_2) = get_two_nodes(&mut nodes);
+
+    // transition node 1 to leader
+    node_1.transition_to(NodeState::Leader, NODE_1_TERM);
+
+    // set lower term on node 2
+    node_2.transition_to(NodeState::Follower, NODE_2_TERM);
+
+    // node 1 broadcasts append entries
+    let log_entry = LogEntry::new(NODE_1_TERM, "test".to_string());
+    node_1.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
+
+    // node 2 receives append entries from node 1
+    let request_message = node_2.receive_message().await;
+
+    // handle append entries
+    if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = request_message {
+        node_2.handle_append_entries(term, leader_id, &new_entries).await.unwrap();
+
+        // check that the append response is a rejection
+        let response_message = node_1.receive_message().await;
+        if let Ok(Message::AppendResponse { term, success }) = response_message {
+            assert_eq!(term, NODE_2_TERM);
+            assert!(!success);
+        } else {
+            panic!("Expected an AppendResponse message");
+        }
+    } else {
+        panic!("Expected an AppendEntries message");
+    }
+}
+
+#[tokio::test]
+async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
+    const NODE_1_TERM: u64 = 10; // higher term
+    const NODE_2_TERM: u64 = NODE_1_TERM - 1;
+    let mut nodes = create_network(2).await;
+
+    // get the nodes
+    let (node_1, node_2) = get_two_nodes(&mut nodes);
+
+    // transition node 1 to leader
+    node_1.transition_to(NodeState::Leader, NODE_1_TERM);
+
+    // set lower term on node 2
+    node_2.transition_to(NodeState::Follower, NODE_2_TERM);
+
+    // node 1 broadcasts append entries
+    let log_entry = LogEntry::new(NODE_1_TERM, "test".to_string());
+    node_1.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
+
+    // node 2 receives append entries from node 1
+    let request_message = node_2.receive_message().await;
+
+    // handle append entries
+    if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = request_message {
+        node_2.handle_append_entries(term, leader_id, &new_entries).await.unwrap();
+
+        // check that the append response is a rejection
+        let response_message = node_1.receive_message().await;
+        if let Ok(Message::AppendResponse { term, success }) = response_message {
+            assert_eq!(term, NODE_1_TERM);
+            assert!(success);
+        } else {
+            panic!("Expected an AppendResponse message");
+        }
+    } else {
+        panic!("Expected an AppendEntries message");
+    }
+}
+
+#[tokio::test]
+async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
+    const NODE_TERM: u64 = 10; // same term for both nodes
+    let mut nodes = create_network(2).await;
+
+    // get the nodes
+    let (node_1, node_2) = get_two_nodes(&mut nodes);
+
+    // transition node 1 to leader
+    node_1.transition_to(NodeState::Leader, NODE_TERM);
+
+    // set lower term on node 2
+    node_2.transition_to(NodeState::Follower, NODE_TERM);
+
+    // node 1 broadcasts append entries
+    let log_entry = LogEntry::new(NODE_TERM, "test".to_string());
+    node_1.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
+
+    // node 2 receives append entries from node 1
+    let request_message = node_2.receive_message().await;
+
+    // handle append entries
+    if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = request_message {
+        node_2.handle_append_entries(term, leader_id, &new_entries).await.unwrap();
+
+        // check that the append response is a rejection
+        let response_message = node_1.receive_message().await;
+        if let Ok(Message::AppendResponse { term, success }) = response_message {
+            assert_eq!(term, NODE_TERM);
+            assert!(success);
+        } else {
+            panic!("Expected an AppendResponse message");
+        }
+    } else {
+        panic!("Expected an AppendEntries message");
     }
 }
