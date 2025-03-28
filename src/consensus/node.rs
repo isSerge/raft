@@ -1,6 +1,6 @@
 use crate::{
     consensus::{ConsensusError, LogEntry},
-    messaging::{Message, NodeMessenger},
+    messaging::{Message, NodeMessenger, NodeReceiver},
     state_machine::StateMachine,
 };
 
@@ -11,7 +11,7 @@ pub enum NodeState {
     Candidate,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Node {
     id: u64,
     state: NodeState,
@@ -19,6 +19,7 @@ pub struct Node {
     voted_for: Option<u64>,
     pub state_machine: StateMachine,
     messenger: NodeMessenger,
+    receiver: NodeReceiver,
     log: Vec<LogEntry>,
 }
 
@@ -50,11 +51,11 @@ impl Node {
     }
 }
 
-// Node message methods (thin wrappers around messenger methods)
+// Node message methods (thin wrappers around messenger and receiver methods)
 impl Node {
     /// Receive a message from the network.
     pub async fn receive_message(&mut self) -> Result<Message, ConsensusError> {
-        self.messenger.receive().await.map_err(ConsensusError::Transport)
+        self.receiver.receive().await.map_err(ConsensusError::Transport)
     }
 
     /// Broadcast a message to all other nodes.
@@ -103,7 +104,12 @@ impl Node {
 
 // Node core methods
 impl Node {
-    pub fn new(id: u64, state_machine: StateMachine, messenger: NodeMessenger) -> Self {
+    pub fn new(
+        id: u64,
+        state_machine: StateMachine,
+        messenger: NodeMessenger,
+        receiver: NodeReceiver,
+    ) -> Self {
         Self {
             id,
             state: NodeState::Follower,
@@ -111,6 +117,7 @@ impl Node {
             voted_for: None,
             state_machine,
             messenger,
+            receiver,
             log: vec![],
         }
     }

@@ -9,7 +9,8 @@ use crate::{
 };
 
 fn create_node(id: u64, network: Arc<Mutex<Network>>) -> Node {
-    Node::new(id, StateMachine::new(), NodeMessenger::new(network))
+    let (node_messenger, node_receiver) = NodeMessenger::new(network);
+    Node::new(id, StateMachine::new(), node_messenger, node_receiver)
 }
 
 #[test]

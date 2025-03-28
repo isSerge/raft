@@ -85,8 +85,8 @@ async fn main() -> Result<(), ConsensusError> {
     let mut nodes: Vec<Node> = Vec::new();
 
     for id in 0..5 {
-        let node_messenger = NodeMessenger::new(network.clone());
-        let node = Node::new(id, StateMachine::new(), node_messenger.clone());
+        let (node_messenger, node_receiver) = NodeMessenger::new(network.clone());
+        let node = Node::new(id, StateMachine::new(), node_messenger.clone(), node_receiver);
         nodes.push(node);
         network.lock().await.add_node(id, node_messenger);
     }
