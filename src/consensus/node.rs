@@ -227,6 +227,10 @@ impl Node {
         self.log.push(new_entry.clone());
         println!("Leader Node {} appended new log entry: {:?}", self.id, new_entry);
 
+        // Broadcast the new log entry to all other nodes.
+        self.broadcast_append_entries(vec![new_entry]).await?;
+
+        // Wait for a majority of responses and update commit index and state machine.
         // TODO: should wait for AppendResponse from other nodes
         let majority_acknowledged = true;
         if majority_acknowledged {
@@ -241,11 +245,6 @@ impl Node {
             );
         }
 
-        // Update the state machine.
-        self.state_machine.apply(1);
-        println!("Leader Node {} updated its own state machine.", self.id);
-
-        // Broadcast the new log entry to all other nodes.
-        self.broadcast_append_entries(vec![new_entry]).await
+        Ok(())
     }
 }
