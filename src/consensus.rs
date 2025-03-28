@@ -190,7 +190,7 @@ impl Node {
         &mut self,
         leader_term: u64,
         leader_id: u64,
-        new_entries: Vec<LogEntry>,
+        new_entries: &[LogEntry],
     ) -> Result<(), ConsensusError> {
         // If leader_term is older than current_term, reject
         if leader_term < self.current_term {
@@ -201,7 +201,7 @@ impl Node {
         self.transition_to(NodeState::Follower, leader_term);
 
         // 2. append log entries to own log
-        self.log.extend(new_entries.clone());
+        self.log.extend(new_entries.iter().cloned());
 
         // 3. update state_machine
         self.state_machine.apply(new_entries.len() as u64);

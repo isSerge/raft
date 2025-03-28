@@ -68,7 +68,7 @@ fn simulate_append_entries(nodes: &mut [Node], leader_id: u64) -> Result<(), Con
     for node in others {
         if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = node.receive_message()
         {
-            node.handle_append_entries(term, leader_id, new_entries)?;
+            node.handle_append_entries(term, leader_id, &new_entries)?;
         }
     }
 
