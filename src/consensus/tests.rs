@@ -107,6 +107,37 @@ async fn test_node_broadcast_vote_request_fails_if_not_candidate() {
 }
 
 #[tokio::test]
+async fn test_node_broadcast_append_entries_sends_message_to_all_nodes() {
+    const NODE_ID: u64 = 0;
+    const TERM: u64 = 1;
+    let mut nodes = create_network(2).await;
+
+    // get the nodes
+    if let [node_1, node_2] = &mut nodes.as_mut_slice() {
+        // transition node 1 to leader
+        node_1.transition_to(NodeState::Leader, TERM);
+
+        // broadcast append entries
+        let log_entry = LogEntry::new(TERM, "test".to_string());
+        node_1.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
+
+        // node 2 receives append entries from node 1
+        let request_message = node_2.receive_message().await;
+
+        // check that the message is an append entries request
+        if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = request_message {
+            assert_eq!(term, TERM);
+            assert_eq!(leader_id, NODE_ID);
+            assert_eq!(new_entries, vec![log_entry]);
+        } else {
+            panic!("Expected an AppendEntries message");
+        }
+    } else {
+        panic!("Expected 2 nodes");
+    }
+}
+
+#[tokio::test]
 async fn test_node_broadcast_vote_request_sends_message_to_all_nodes() {
     const NODE_ID_1: u64 = 0;
     const TERM: u64 = 1;
@@ -168,6 +199,44 @@ async fn test_node_send_append_response() {
             assert!(success);
         } else {
             panic!("Expected an AppendResponse message");
+        }
+    } else {
+        panic!("Expected 2 nodes");
+    }
+}
+
+#[tokio::test]
+async fn test_node_send_vote_response() {
+    const TERM: u64 = 21;
+    let mut nodes = create_network(2).await;
+
+    // get the nodes
+    if let [node_1, node_2] = &mut nodes.as_mut_slice() {
+        // transition node 1 to candidate
+        node_1.transition_to(NodeState::Candidate, TERM);
+
+        // broadcast vote request
+        let result = node_1.broadcast_vote_request().await;
+        assert!(result.is_ok());
+
+        // receive message from node 2
+        let message = node_2.receive_message().await;
+
+        // handle vote request
+        if let Ok(Message::VoteRequest { term, candidate_id }) = message {
+            node_2.handle_request_vote(term, candidate_id).await.unwrap();
+        } else {
+            panic!("Expected a VoteRequest message");
+        }
+
+        // node 1 receives vote response from node 2
+        let response_message = node_1.receive_message().await;
+
+        if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+            assert_eq!(term, TERM);
+            assert!(vote_granted);
+        } else {
+            panic!("Expected a VoteResponse message");
         }
     } else {
         panic!("Expected 2 nodes");
