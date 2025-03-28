@@ -25,32 +25,39 @@ async fn simulate_election(nodes: &mut [Node], candidate_id: u64) -> Result<(), 
     candidate.transition_to(NodeState::Candidate, election_term);
     candidate.broadcast_vote_request().await?;
 
-    // 2. Calculate majority needed
-    let majority_needed = nodes_count / 2 + 1;
-    let mut votes_received = 1; // self-vote
-
-    // 3. Process other nodes
+    // 2. Let other nodes vote for the candidate
     for node in others {
         if let Ok(Message::VoteRequest { term, candidate_id }) = node.receive_message().await {
             node.handle_request_vote(term, candidate_id).await?;
-            if node.voted_for() == Some(candidate_id) {
+        }
+    }
+
+    // 3. Wait for responses from other nodes
+    // Currently wait for all other nodes to vote
+    // TODO: handle votes asynchronously
+    let mut votes_received = 1; // self-vote
+    for _ in 0..nodes_count - 1 {
+        if let Ok(Message::VoteResponse { term: _, vote_granted }) =
+            candidate.receive_message().await
+        {
+            if vote_granted {
                 votes_received += 1;
             }
         }
     }
 
-    // 4. Handle election outcome
-    if votes_received >= majority_needed {
+    // 5. Handle election outcome
+    if votes_received >= nodes_count - 1 {
         candidate.transition_to(NodeState::Leader, election_term);
         println!(
             "Node {} elected leader with {}/{} votes",
-            candidate_id, votes_received, majority_needed
+            candidate_id, votes_received, nodes_count
         );
     } else {
         candidate.transition_to(NodeState::Follower, election_term);
         println!(
             "Node {} failed election ({}/{} votes)",
-            candidate_id, votes_received, majority_needed
+            candidate_id, votes_received, nodes_count
         );
     }
 
