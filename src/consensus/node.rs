@@ -108,7 +108,8 @@ impl Node {
             term: self.current_term,
             leader_id: self.id,
             new_entries,
-            commit_index: self.commit_index,
+            commit_index: self.log.len() as u64, /* assuming immediate commit, TODO: update
+                                                  * commit_index after majority of responses */
         };
         self.broadcast(msg).await
     }
