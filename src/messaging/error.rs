@@ -1,4 +1,4 @@
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum MessagingError {
     #[error("Destination node {0} not found")]
     NodeNotFound(u64),
@@ -6,8 +6,6 @@ pub enum MessagingError {
     SendError,
     #[error("Failed to receive message")]
     ReceiveError,
-    #[error("Mutex lock error")]
-    MutexError,
     #[error("Failed to broadcast message")]
     BroadcastError,
 }

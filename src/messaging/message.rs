@@ -1,7 +1,7 @@
 use crate::consensus::LogEntry;
 
 /// A message in the network
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     /// Request vote from other nodes during election
     VoteRequest { term: u64, candidate_id: u64 },

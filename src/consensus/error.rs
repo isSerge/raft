@@ -1,6 +1,6 @@
 use crate::messaging::MessagingError;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ConsensusError {
     #[error("Node {0} not found")]
     NodeNotFound(u64),

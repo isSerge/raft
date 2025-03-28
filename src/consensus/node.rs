@@ -83,6 +83,7 @@ impl Node {
         self.messenger.send_to(self.id, candidate_id, msg).await.map_err(ConsensusError::Transport)
     }
 
+    /// Broadcast a vote request to all other nodes.
     pub async fn broadcast_vote_request(&self) -> Result<(), ConsensusError> {
         if !matches!(self.state, NodeState::Candidate) {
             return Err(ConsensusError::NotCandidate(self.id));
@@ -92,6 +93,7 @@ impl Node {
         self.broadcast(msg).await
     }
 
+    /// Broadcast an AppendEntries request to all other nodes.
     pub async fn broadcast_append_entries(
         &self,
         new_entries: Vec<LogEntry>,
