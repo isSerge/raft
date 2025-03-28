@@ -245,16 +245,16 @@ async fn test_node_send_vote_response() {
 
 #[tokio::test]
 async fn test_node_handle_request_vote_rejects_older_term() {
-    const TERM: u64 = 1;
+    const NODE_1_TERM: u64 = 1;
+    const NODE_2_TERM: u64 = NODE_1_TERM + 1;
     let mut nodes = create_network(2).await;
 
     // get the nodes
     if let [node_1, node_2] = &mut nodes.as_mut_slice() {
         // transition node 1 to candidate
-        node_1.transition_to(NodeState::Candidate, TERM);
+        node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
 
         // set higher term on node 2
-        const NODE_2_TERM: u64 = TERM + 1;
         node_2.transition_to(NodeState::Follower, NODE_2_TERM);
 
         // node 1 broadcasts vote request
@@ -273,6 +273,45 @@ async fn test_node_handle_request_vote_rejects_older_term() {
             if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
                 assert_eq!(term, NODE_2_TERM);
                 assert!(!vote_granted);
+            } else {
+                panic!("Expected a VoteResponse message");
+            }
+        } else {
+            panic!("Expected a VoteRequest message");
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_node_handle_request_vote_accepts_newer_term() {
+    const NODE_1_TERM: u64 = 10;
+    const NODE_2_TERM: u64 = NODE_1_TERM - 1;
+    let mut nodes = create_network(2).await;
+
+    // get the nodes
+    if let [node_1, node_2] = &mut nodes.as_mut_slice() {
+        // transition node 1 to candidate
+        node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
+
+        // set lower term on node 2
+        node_2.transition_to(NodeState::Follower, NODE_2_TERM);
+
+        // node 1 broadcasts vote request
+        let result = node_1.broadcast_vote_request().await;
+        assert!(result.is_ok());
+
+        // node 2 receives vote request from node 1
+        let message = node_2.receive_message().await;
+
+        // handle vote request from node 1
+        if let Ok(Message::VoteRequest { term, candidate_id }) = message {
+            node_2.handle_request_vote(term, candidate_id).await.unwrap();
+
+            // check that the vote response is a rejection
+            let response_message = node_1.receive_message().await;
+            if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+                assert_eq!(term, NODE_1_TERM);
+                assert!(vote_granted);
             } else {
                 panic!("Expected a VoteResponse message");
             }
