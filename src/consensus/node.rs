@@ -21,6 +21,7 @@ pub struct Node {
     messenger: NodeMessenger,
     receiver: NodeReceiver,
     log: Vec<LogEntry>,
+    commit_index: u64,
 }
 
 // Node getters
@@ -48,6 +49,11 @@ impl Node {
     /// Get the log.
     pub fn log(&self) -> &[LogEntry] {
         &self.log
+    }
+
+    /// Get the commit index.
+    pub fn commit_index(&self) -> u64 {
+        self.commit_index
     }
 }
 
@@ -98,8 +104,12 @@ impl Node {
         &self,
         new_entries: Vec<LogEntry>,
     ) -> Result<(), ConsensusError> {
-        let msg =
-            Message::AppendEntries { term: self.current_term, leader_id: self.id, new_entries };
+        let msg = Message::AppendEntries {
+            term: self.current_term,
+            leader_id: self.id,
+            new_entries,
+            commit_index: self.commit_index,
+        };
         self.broadcast(msg).await
     }
 }
@@ -121,6 +131,7 @@ impl Node {
             messenger,
             receiver,
             log: vec![],
+            commit_index: 0,
         }
     }
 
@@ -178,6 +189,7 @@ impl Node {
         leader_term: u64,
         leader_id: u64,
         new_entries: &[LogEntry],
+        leader_commit_index: u64,
     ) -> Result<(), ConsensusError> {
         // If leader_term is older than current_term, reject
         if leader_term < self.current_term {
@@ -190,7 +202,11 @@ impl Node {
         // 2. append log entries to own log
         self.log.extend(new_entries.iter().cloned());
 
-        // 3. update state_machine
+        // 3. update commit_index
+        let upper_bound = self.log.len() as u64; // max possible commit index for this node
+        self.commit_index = leader_commit_index.min(upper_bound);
+
+        // 4. update state_machine
         self.state_machine.apply(new_entries.len() as u64);
 
         // 4. send response to leader
@@ -210,6 +226,20 @@ impl Node {
         let new_entry = LogEntry::new(self.current_term, command);
         self.log.push(new_entry.clone());
         println!("Leader Node {} appended new log entry: {:?}", self.id, new_entry);
+
+        // TODO: should wait for AppendResponse from other nodes
+        let majority_acknowledged = true;
+        if majority_acknowledged {
+            // Update commit index to the new log length.
+            self.commit_index = self.log.len() as u64;
+            // Now apply the log entry to the leader's state machine.
+            self.state_machine.apply(1);
+            println!(
+                "Leader Node {} committed log entry and updated its state machine. Commit index: \
+                 {}",
+                self.id, self.commit_index
+            );
+        }
 
         // Update the state machine.
         self.state_machine.apply(1);

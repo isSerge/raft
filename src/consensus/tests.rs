@@ -136,10 +136,13 @@ async fn test_node_broadcast_append_entries_sends_message_to_all_nodes() {
     let request_message = node_2.receive_message().await;
 
     // check that the message is an append entries request
-    if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = request_message {
+    if let Ok(Message::AppendEntries { term, leader_id, new_entries, commit_index }) =
+        request_message
+    {
         assert_eq!(term, TERM);
         assert_eq!(leader_id, NODE_ID);
         assert_eq!(new_entries, vec![log_entry]);
+        assert_eq!(commit_index, 0);
     } else {
         panic!("Expected an AppendEntries message");
     }
@@ -192,8 +195,10 @@ async fn test_node_send_append_response() {
     let request_message = node_2.receive_message().await;
 
     // handle append entries
-    if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = request_message {
-        node_2.handle_append_entries(term, leader_id, &new_entries).await.unwrap();
+    if let Ok(Message::AppendEntries { term, leader_id, new_entries, commit_index }) =
+        request_message
+    {
+        node_2.handle_append_entries(term, leader_id, &new_entries, commit_index).await.unwrap();
     } else {
         panic!("Expected an AppendEntries message");
     }
@@ -469,8 +474,10 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
     let request_message = node_2.receive_message().await;
 
     // handle append entries
-    if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = request_message {
-        node_2.handle_append_entries(term, leader_id, &new_entries).await.unwrap();
+    if let Ok(Message::AppendEntries { term, leader_id, new_entries, commit_index }) =
+        request_message
+    {
+        node_2.handle_append_entries(term, leader_id, &new_entries, commit_index).await.unwrap();
 
         // check that the append response is a rejection
         let response_message = node_1.receive_message().await;
@@ -508,8 +515,10 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
     let request_message = node_2.receive_message().await;
 
     // handle append entries
-    if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = request_message {
-        node_2.handle_append_entries(term, leader_id, &new_entries).await.unwrap();
+    if let Ok(Message::AppendEntries { term, leader_id, new_entries, commit_index }) =
+        request_message
+    {
+        node_2.handle_append_entries(term, leader_id, &new_entries, commit_index).await.unwrap();
 
         // check that the append response is a rejection
         let response_message = node_1.receive_message().await;
@@ -546,8 +555,10 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
     let request_message = node_2.receive_message().await;
 
     // handle append entries
-    if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = request_message {
-        node_2.handle_append_entries(term, leader_id, &new_entries).await.unwrap();
+    if let Ok(Message::AppendEntries { term, leader_id, new_entries, commit_index }) =
+        request_message
+    {
+        node_2.handle_append_entries(term, leader_id, &new_entries, commit_index).await.unwrap();
 
         // check that the append response is a rejection
         let response_message = node_1.receive_message().await;
@@ -628,12 +639,13 @@ async fn test_node_append_to_log_and_broadcast_sends_append_entries_to_all_nodes
     // check that node 2 received the append entries
     let message = node_2.receive_message().await;
 
-    if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = message {
+    if let Ok(Message::AppendEntries { term, leader_id, new_entries, commit_index }) = message {
         assert_eq!(term, TERM);
         assert_eq!(leader_id, NODE_ID);
         assert_eq!(new_entries.len(), node_1.log().len());
         assert_eq!(new_entries[0].term, TERM);
         assert_eq!(new_entries[0].command, COMMAND);
+        assert_eq!(commit_index, 0);
     } else {
         panic!("Expected an AppendEntries message");
     }

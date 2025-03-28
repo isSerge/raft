@@ -67,10 +67,10 @@ async fn simulate_append_entries(nodes: &mut [Node], leader_id: u64) -> Result<(
 
     // Process append entries
     for node in others {
-        if let Ok(Message::AppendEntries { term, leader_id, new_entries }) =
+        if let Ok(Message::AppendEntries { term, leader_id, new_entries, commit_index }) =
             node.receive_message().await
         {
-            node.handle_append_entries(term, leader_id, &new_entries).await?;
+            node.handle_append_entries(term, leader_id, &new_entries, commit_index).await?;
         }
     }
 

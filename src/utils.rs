@@ -3,13 +3,15 @@ use crate::consensus::{ConsensusError, Node};
 pub fn print_node_state(nodes: &[Node]) {
     for node in nodes {
         println!(
-            "Node {}: state: {:?}, term: {}, voted_for: {:?}, log: {:?}, state_machine: {:?}",
+            "Node {}: state: {:?}, term: {}, voted_for: {:?}, log: {:?}, state_machine: {:?}, \
+             commit_index: {}",
             node.id(),
             node.state(),
             node.current_term(),
             node.voted_for(),
             node.log(),
-            node.state_machine.get_state()
+            node.state_machine.get_state(),
+            node.commit_index()
         );
     }
 }
