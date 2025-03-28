@@ -85,7 +85,7 @@ fn main() -> Result<(), ConsensusError> {
         let node_messenger = NodeMessenger::new(network.clone());
         let node = Node::new(id, StateMachine::new(), node_messenger.clone());
         nodes.push(node);
-        network.lock().unwrap().add_node_messenger(id, node_messenger);
+        network.lock().unwrap().add_node(id, node_messenger);
     }
 
     simulate_election(&mut nodes, 0)?;
