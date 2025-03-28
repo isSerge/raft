@@ -2,14 +2,15 @@ mod consensus;
 mod messaging;
 mod state_machine;
 mod utils;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use consensus::{ConsensusError, Node, NodeState};
 use messaging::{Message, Network, NodeMessenger};
 use state_machine::StateMachine;
+use tokio::sync::Mutex;
 use utils::{partition_nodes_mut, print_node_state};
 
-fn simulate_election(nodes: &mut [Node], candidate_id: u64) -> Result<(), ConsensusError> {
+async fn simulate_election(nodes: &mut [Node], candidate_id: u64) -> Result<(), ConsensusError> {
     // Get nodes count first to avoid mutable borrow issues
     let nodes_count = nodes.len();
 
@@ -22,7 +23,7 @@ fn simulate_election(nodes: &mut [Node], candidate_id: u64) -> Result<(), Consen
     }
     let election_term = candidate.current_term() + 1;
     candidate.transition_to(NodeState::Candidate, election_term);
-    candidate.broadcast_vote_request()?;
+    candidate.broadcast_vote_request().await?;
 
     // 2. Calculate majority needed
     let majority_needed = nodes_count / 2 + 1;
@@ -30,8 +31,8 @@ fn simulate_election(nodes: &mut [Node], candidate_id: u64) -> Result<(), Consen
 
     // 3. Process other nodes
     for node in others {
-        if let Ok(Message::VoteRequest { term, candidate_id }) = node.receive_message() {
-            node.handle_request_vote(term, candidate_id)?;
+        if let Ok(Message::VoteRequest { term, candidate_id }) = node.receive_message().await {
+            node.handle_request_vote(term, candidate_id).await?;
             if node.voted_for() == Some(candidate_id) {
                 votes_received += 1;
             }
@@ -57,18 +58,19 @@ fn simulate_election(nodes: &mut [Node], candidate_id: u64) -> Result<(), Consen
     Ok(())
 }
 
-fn simulate_append_entries(nodes: &mut [Node], leader_id: u64) -> Result<(), ConsensusError> {
+async fn simulate_append_entries(nodes: &mut [Node], leader_id: u64) -> Result<(), ConsensusError> {
     let (leader, others) = partition_nodes_mut(nodes, leader_id)?;
 
     // Leader appends a new command to its own log and broadcasts it to all other
     // nodes.
-    leader.append_to_log_and_broadcast("command".to_string())?;
+    leader.append_to_log_and_broadcast("command".to_string()).await?;
 
     // Process append entries
     for node in others {
-        if let Ok(Message::AppendEntries { term, leader_id, new_entries }) = node.receive_message()
+        if let Ok(Message::AppendEntries { term, leader_id, new_entries }) =
+            node.receive_message().await
         {
-            node.handle_append_entries(term, leader_id, &new_entries)?;
+            node.handle_append_entries(term, leader_id, &new_entries).await?;
         }
     }
 
@@ -77,7 +79,8 @@ fn simulate_append_entries(nodes: &mut [Node], leader_id: u64) -> Result<(), Con
     Ok(())
 }
 
-fn main() -> Result<(), ConsensusError> {
+#[tokio::main]
+async fn main() -> Result<(), ConsensusError> {
     let network = Arc::new(Mutex::new(Network::new()));
     let mut nodes: Vec<Node> = Vec::new();
 
@@ -85,12 +88,12 @@ fn main() -> Result<(), ConsensusError> {
         let node_messenger = NodeMessenger::new(network.clone());
         let node = Node::new(id, StateMachine::new(), node_messenger.clone());
         nodes.push(node);
-        network.lock().unwrap().add_node(id, node_messenger);
+        network.lock().await.add_node(id, node_messenger);
     }
 
-    simulate_election(&mut nodes, 0)?;
+    simulate_election(&mut nodes, 0).await?;
 
-    simulate_append_entries(&mut nodes, 0)?;
+    simulate_append_entries(&mut nodes, 0).await?;
 
     Ok(())
 }

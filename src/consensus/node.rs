@@ -53,47 +53,51 @@ impl Node {
 // Node message methods (thin wrappers around messenger methods)
 impl Node {
     /// Receive a message from the network.
-    pub fn receive_message(&mut self) -> Result<Message, ConsensusError> {
-        self.messenger.receive().map_err(ConsensusError::Transport)
+    pub async fn receive_message(&mut self) -> Result<Message, ConsensusError> {
+        self.messenger.receive().await.map_err(ConsensusError::Transport)
     }
 
     /// Broadcast a message to all other nodes.
-    fn broadcast(&self, message: Message) -> Result<(), ConsensusError> {
-        self.messenger.broadcast(self.id, message).map_err(ConsensusError::Transport)
+    async fn broadcast(&self, message: Message) -> Result<(), ConsensusError> {
+        self.messenger.broadcast(self.id, message).await.map_err(ConsensusError::Transport)
     }
 
     /// Send an AppendResponse to a leader.
-    fn send_append_response(&self, leader_id: u64, success: bool) -> Result<(), ConsensusError> {
+    async fn send_append_response(
+        &self,
+        leader_id: u64,
+        success: bool,
+    ) -> Result<(), ConsensusError> {
         let msg = Message::AppendResponse { term: self.current_term, success };
-        self.messenger.send_to(self.id, leader_id, msg).map_err(ConsensusError::Transport)
+        self.messenger.send_to(self.id, leader_id, msg).await.map_err(ConsensusError::Transport)
     }
 
     /// Send a VoteResponse to a candidate.
-    fn send_vote_response(
+    async fn send_vote_response(
         &self,
         candidate_id: u64,
         vote_granted: bool,
     ) -> Result<(), ConsensusError> {
         let msg = Message::VoteResponse { term: self.current_term, vote_granted };
-        self.messenger.send_to(self.id, candidate_id, msg).map_err(ConsensusError::Transport)
+        self.messenger.send_to(self.id, candidate_id, msg).await.map_err(ConsensusError::Transport)
     }
 
-    pub fn broadcast_vote_request(&self) -> Result<(), ConsensusError> {
+    pub async fn broadcast_vote_request(&self) -> Result<(), ConsensusError> {
         if !matches!(self.state, NodeState::Candidate) {
             return Err(ConsensusError::NotCandidate(self.id));
         }
 
         let msg = Message::VoteRequest { term: self.current_term, candidate_id: self.id };
-        self.broadcast(msg)
+        self.broadcast(msg).await
     }
 
-    pub fn broadcast_append_entries(
+    pub async fn broadcast_append_entries(
         &self,
         new_entries: Vec<LogEntry>,
     ) -> Result<(), ConsensusError> {
         let msg =
             Message::AppendEntries { term: self.current_term, leader_id: self.id, new_entries };
-        self.broadcast(msg)
+        self.broadcast(msg).await
     }
 }
 
@@ -135,14 +139,14 @@ impl Node {
     }
 
     /// Handle a request vote from a candidate
-    pub fn handle_request_vote(
+    pub async fn handle_request_vote(
         &mut self,
         candidate_term: u64,
         candidate_id: u64,
     ) -> Result<(), ConsensusError> {
         // 1. If candidate_term is older than current_term, reject
         if candidate_term < self.current_term {
-            return self.send_vote_response(candidate_id, false);
+            return self.send_vote_response(candidate_id, false).await;
         }
         // 2. If candidate_term is greater than current_term, convert to follower and
         //    reset voted_for
@@ -156,11 +160,11 @@ impl Node {
             self.voted_for = Some(candidate_id);
         }
 
-        self.send_vote_response(candidate_id, can_vote)
+        self.send_vote_response(candidate_id, can_vote).await
     }
 
     /// Handle an AppendEntries request from a leader
-    pub fn handle_append_entries(
+    pub async fn handle_append_entries(
         &mut self,
         leader_term: u64,
         leader_id: u64,
@@ -168,7 +172,7 @@ impl Node {
     ) -> Result<(), ConsensusError> {
         // If leader_term is older than current_term, reject
         if leader_term < self.current_term {
-            return self.send_append_response(leader_id, false);
+            return self.send_append_response(leader_id, false).await;
         }
         // If leader_term is equal or greater than current_term:
         // 1. convert to follower
@@ -181,10 +185,13 @@ impl Node {
         self.state_machine.apply(new_entries.len() as u64);
 
         // 4. send response to leader
-        self.send_append_response(leader_id, true)
+        self.send_append_response(leader_id, true).await
     }
 
-    pub fn append_to_log_and_broadcast(&mut self, command: String) -> Result<(), ConsensusError> {
+    pub async fn append_to_log_and_broadcast(
+        &mut self,
+        command: String,
+    ) -> Result<(), ConsensusError> {
         // Ensure that only a leader can append a new command.
         if !matches!(self.state, NodeState::Leader) {
             return Err(ConsensusError::NotLeader(self.id));
@@ -200,6 +207,6 @@ impl Node {
         println!("Leader Node {} updated its own state machine.", self.id);
 
         // Broadcast the new log entry to all other nodes.
-        self.broadcast_append_entries(vec![new_entry])
+        self.broadcast_append_entries(vec![new_entry]).await
     }
 }

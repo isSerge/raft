@@ -18,10 +18,15 @@ impl Network {
     }
 
     /// Send a message to a specific node
-    pub fn send_message(&self, from: u64, to: u64, message: Message) -> Result<(), MessagingError> {
+    pub async fn send_message(
+        &self,
+        from: u64,
+        to: u64,
+        message: Message,
+    ) -> Result<(), MessagingError> {
         if let Some(dest) = self.nodes.get(&to) {
             println!("Routing message from node {} to node {}", from, to);
-            dest.send(message).map_err(|_| MessagingError::SendError)
+            dest.send(message).await.map_err(|_| MessagingError::SendError)
         } else {
             eprintln!("Destination node {} not found", to);
             Err(MessagingError::NodeNotFound(to))
@@ -29,12 +34,15 @@ impl Network {
     }
 
     /// Broadcast a message to all nodes
-    pub fn broadcast(&self, from: u64, message: Message) -> Result<(), MessagingError> {
+    pub async fn broadcast(&self, from: u64, message: Message) -> Result<(), MessagingError> {
         for (node_id, node_messenger) in &self.nodes {
             // Don't send message to itself
             if *node_id != from {
                 println!("Broadcasting message from node {} to node {}", from, node_id);
-                node_messenger.send(message.clone()).map_err(|_| MessagingError::SendError)?;
+                node_messenger
+                    .send(message.clone())
+                    .await
+                    .map_err(|_| MessagingError::SendError)?;
             }
         }
         Ok(())
