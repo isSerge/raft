@@ -47,4 +47,9 @@ impl Network {
         }
         Ok(())
     }
+
+    /// Returns the number of nodes in the network.
+    pub fn get_nodes_count(&self) -> usize {
+        self.nodes.len()
+    }
 }

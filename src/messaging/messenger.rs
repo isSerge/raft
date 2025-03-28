@@ -25,7 +25,7 @@ impl NodeReceiver {
 
     /// Receives a message from this node's own queue.
     pub async fn receive(&mut self) -> Result<Message, MessagingError> {
-        self.receiver.try_recv().map_err(|_| MessagingError::ReceiveError)
+        self.receiver.recv().await.ok_or(MessagingError::ReceiveError)
     }
 }
 
@@ -55,5 +55,11 @@ impl NodeMessenger {
     pub async fn broadcast(&self, from: u64, message: Message) -> Result<(), MessagingError> {
         let network = self.network.lock().await;
         network.broadcast(from, message).await.map_err(|_| MessagingError::BroadcastError)
+    }
+
+    /// Returns the number of nodes in the network.
+    pub async fn get_nodes_count(&self) -> Result<usize, MessagingError> {
+        let network = self.network.lock().await;
+        Ok(network.get_nodes_count())
     }
 }
