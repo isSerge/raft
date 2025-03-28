@@ -359,3 +359,91 @@ async fn test_node_handle_request_vote_accepts_equal_term() {
         }
     }
 }
+
+#[tokio::test]
+async fn test_node_handle_request_vote_rejects_if_already_voted() {
+    const NODE_1_TERM: u64 = 10;
+    const NODE_2_TERM: u64 = NODE_1_TERM;
+    let mut nodes = create_network(2).await;
+
+    // get the nodes
+    if let [node_1, node_2] = &mut nodes.as_mut_slice() {
+        // transition node 1 to candidate
+        node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
+
+        // transition node 2 to follower
+        node_2.transition_to(NodeState::Candidate, NODE_2_TERM);
+
+        // both should have same term and self as voted_for
+        assert_eq!(node_1.voted_for(), Some(node_1.id()));
+        assert_eq!(node_2.voted_for(), Some(node_2.id()));
+
+        // node 1 broadcasts vote request
+        let result = node_1.broadcast_vote_request().await;
+        assert!(result.is_ok());
+
+        // node 2 receives vote request from node 1
+        let message = node_2.receive_message().await;
+
+        // handle vote request from node 1
+        if let Ok(Message::VoteRequest { term, candidate_id }) = message {
+            node_2.handle_request_vote(term, candidate_id).await.unwrap();
+
+            // check that the vote response is a rejection
+            let response_message = node_1.receive_message().await;
+            if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+                assert_eq!(term, NODE_1_TERM);
+                assert!(!vote_granted);
+            } else {
+                panic!("Expected a VoteResponse message");
+            }
+        } else {
+            panic!("Expected a VoteRequest message");
+        }
+    } else {
+        panic!("Expected 2 nodes");
+    }
+}
+
+#[tokio::test]
+async fn test_node_handle_request_vote_accepts_if_not_voted() {
+    const NODE_1_TERM: u64 = 10;
+    let mut nodes = create_network(2).await;
+
+    // get the nodes
+    if let [node_1, node_2] = &mut nodes.as_mut_slice() {
+        // transition node 1 to candidate
+        node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
+
+        // node 1 should have self as voted_for
+        assert_eq!(node_1.voted_for(), Some(node_1.id()));
+
+        // node 2 should not have voted yet
+        assert_eq!(node_2.voted_for(), None);
+
+        // node 1 broadcasts vote request
+        let result = node_1.broadcast_vote_request().await;
+        assert!(result.is_ok());
+
+        // node 2 receives vote request from node 1
+        let message = node_2.receive_message().await;
+
+        // handle vote request from node 1
+        if let Ok(Message::VoteRequest { term, candidate_id }) = message {
+            node_2.handle_request_vote(term, candidate_id).await.unwrap();
+
+            // check that the vote response is a rejection
+            let response_message = node_1.receive_message().await;
+            if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+                assert_eq!(term, NODE_1_TERM);
+                assert!(vote_granted);
+            } else {
+                panic!("Expected a VoteResponse message");
+            }
+        } else {
+            panic!("Expected a VoteRequest message");
+        }
+    } else {
+        panic!("Expected 2 nodes");
+    }
+}
