@@ -2,65 +2,76 @@ mod consensus;
 mod messaging;
 mod state_machine;
 mod utils;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use consensus::{ConsensusError, Node};
-use log::error;
-use messaging::{Network, NodeMessenger};
+use log::{error, info};
+use messaging::{Message, Network, NodeMessenger};
 use state_machine::StateMachine;
 use tokio::sync::Mutex;
 
-async fn simulate_election(
-    nodes: &mut HashMap<u64, Arc<Mutex<Node>>>,
-    candidate_id: u64,
+// Helper to send a command message to a specific node
+async fn send_command_to_node(
+    nodes_messengers: &HashMap<u64, NodeMessenger>, // Pass messengers map
+    node_id: u64,
+    message: Message,
 ) -> Result<(), ConsensusError> {
-    // Get candidate
-    let candidate_arc =
-        nodes.get(&candidate_id).ok_or(ConsensusError::NodeNotFound(candidate_id))?;
-
-    // Update node state (transition to candidate) and then drop the lock
-    let mut candidate = candidate_arc.lock().await;
-    candidate.start_election().await?;
-
-    Ok(())
-}
-
-// TODO: update simulation to process messages internally
-async fn simulate_append_entries(
-    nodes: &mut HashMap<u64, Arc<Mutex<Node>>>,
-    leader_id: u64,
-) -> Result<(), ConsensusError> {
-    // Get leader by temp removing it from the nodes map
-    let leader_arc = nodes.get(&leader_id).ok_or(ConsensusError::NodeNotFound(leader_id))?;
-
-    let mut leader = leader_arc.lock().await;
-    leader.append_to_log_and_broadcast("command".to_string()).await?;
-
-    Ok(())
+    if let Some(messenger) = nodes_messengers.get(&node_id) {
+        // Use send_self because the command originates "externally" but targets the
+        // node's loop
+        messenger.send_self(message).await.map_err(ConsensusError::Transport)
+    } else {
+        Err(ConsensusError::NodeNotFound(node_id))
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), ConsensusError> {
+    // Initialize logging (e.g., using env_logger)
+    env_logger::init();
+
     let network = Arc::new(Mutex::new(Network::new()));
     let mut nodes: HashMap<u64, Arc<Mutex<Node>>> = HashMap::new();
+    let mut nodes_messengers: HashMap<u64, NodeMessenger> = HashMap::new();
 
-    for id in 0..5 {
+    let node_count = 5;
+    info!("Setting up {} nodes...", node_count);
+
+    for id in 0..node_count {
+        // Create a new node messenger and receiver
         let (node_messenger, node_receiver) = NodeMessenger::new(id, network.clone());
-        let node = Node::new(id, StateMachine::new(), node_messenger.clone(), node_receiver);
-        let node_arc = Arc::new(Mutex::new(node));
-        nodes.insert(id, node_arc.clone());
+
+        // Add sender to the network
         network.lock().await.add_node(id, node_messenger.sender.clone());
+
+        // Add messenger to the nodes messengers map (to send commands)
+        nodes_messengers.insert(id, node_messenger.clone());
+
+        // Create a new node
+        let node = Node::new(id, StateMachine::new(), node_messenger, node_receiver);
+        let node_arc = Arc::new(Mutex::new(node));
+        // Store the node in the nodes map
+        nodes.insert(id, node_arc.clone());
+
+        // Spawn a new task to process incoming messages for the node
         tokio::spawn(async move {
-            let node_id = node_arc.lock().await.id();
-            if let Err(e) = node_arc.lock().await.process_incoming_messages().await {
-                error!("Node {} error: {}", node_id, e);
+            let mut node_locked = node_arc.lock().await;
+            info!("Start processing messages for node {}", node_locked.id());
+
+            if let Err(e) = node_locked.process_incoming_messages().await {
+                error!("Node {} error: {}", node_locked.id(), e);
             }
         });
     }
 
-    simulate_election(&mut nodes, 0).await?;
+    info!("Nodes initialized, tasks spawned");
 
-    // simulate_append_entries(&mut nodes, 0).await?;
+    info!("Starting election for node 0");
+    send_command_to_node(&nodes_messengers, 0, Message::StartElectionCmd).await?;
+
+    // Give time for election to potentially happen
+    info!("Waiting for election process...");
+    tokio::time::sleep(Duration::from_secs(3)).await;
 
     Ok(())
 }
