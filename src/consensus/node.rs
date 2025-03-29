@@ -56,6 +56,11 @@ impl Node {
     pub fn commit_index(&self) -> u64 {
         self.commit_index
     }
+
+    /// Get the number of votes received.
+    pub fn votes_received(&self) -> u64 {
+        self.votes_received
+    }
 }
 
 // Node message methods (thin wrappers around messenger and receiver methods)
