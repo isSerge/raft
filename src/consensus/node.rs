@@ -281,8 +281,9 @@ impl Node {
             );
         }
 
-        // TODO: remove hardcoded number of nodes
-        if self.votes_received >= 5 {
+        let majority_count = self.messenger.get_nodes_count().await.unwrap() as u64 / 2;
+
+        if self.votes_received >= majority_count {
             println!("Node {} received majority of votes, becoming leader", self.id);
             self.transition_to(NodeState::Leader, self.current_term);
         }
@@ -292,7 +293,9 @@ impl Node {
 
     /// Continuously process incoming messages.
     pub async fn process_incoming_messages(&mut self) -> Result<(), ConsensusError> {
-        while let Ok(message) = self.receive_message().await {
+        loop {
+            let message = self.receive_message().await?;
+
             match message {
                 Message::VoteRequest { term, candidate_id } => {
                     self.handle_request_vote(term, candidate_id).await?;
@@ -306,6 +309,5 @@ impl Node {
                 }
             }
         }
-        Ok(())
     }
 }
