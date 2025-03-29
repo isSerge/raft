@@ -74,7 +74,7 @@ impl Node {
 
     /// Broadcast a message to all other nodes.
     async fn broadcast(&self, message: Message) -> Result<(), ConsensusError> {
-        self.messenger.broadcast(self.id, message).await.map_err(ConsensusError::Transport)
+        self.messenger.broadcast(message).await.map_err(ConsensusError::Transport)
     }
 
     /// Send an AppendResponse to a leader.
@@ -85,7 +85,7 @@ impl Node {
     ) -> Result<(), ConsensusError> {
         let msg = Message::AppendResponse { term: self.current_term, success, from_id: self.id };
         info!("Node {} sending AppendResponse to leader {}: {:?}", self.id, leader_id, msg);
-        self.messenger.send_to(self.id, leader_id, msg).await.map_err(ConsensusError::Transport)
+        self.messenger.send_to(leader_id, msg).await.map_err(ConsensusError::Transport)
     }
 
     /// Send a VoteResponse to a candidate.
@@ -96,7 +96,7 @@ impl Node {
     ) -> Result<(), ConsensusError> {
         let msg = Message::VoteResponse { term: self.current_term, vote_granted, from_id: self.id };
         info!("Node {} sending VoteResponse to candidate {}: {:?}", self.id, candidate_id, msg);
-        self.messenger.send_to(self.id, candidate_id, msg).await.map_err(ConsensusError::Transport)
+        self.messenger.send_to(candidate_id, msg).await.map_err(ConsensusError::Transport)
     }
 
     /// Broadcast a vote request to all other nodes.
@@ -344,7 +344,7 @@ impl Node {
             );
         }
 
-        let total_nodes = self.messenger.get_nodes_count().await.unwrap() as u64;
+        let total_nodes = self.messenger.get_nodes_count().await? as u64;
         let majority_count = total_nodes / 2 + 1;
 
         if self.votes_received >= majority_count {
@@ -392,6 +392,9 @@ impl Node {
                 }
                 Ok(Message::AppendResponse { term, success, from_id }) => {
                     self.handle_append_response(term, success, from_id).await?;
+                }
+                Ok(Message::StartElectionCmd) => {
+                    self.start_election().await?;
                 }
                 Err(e) => {
                     error!("Node {} failed to receive message: {:?}. Stopping loop.", self.id, e);

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use tokio::sync::mpsc;
 
 use crate::messaging::{Message, MessagingError};
@@ -22,42 +22,32 @@ impl Network {
         self.node_senders.insert(node_id, node_sender);
     }
 
-    /// Send a message to a specific node
-    pub async fn send_message(
+    /// Routes a message from a sender node to a destination node's queue.
+    pub async fn route_message(
         &self,
         from: u64,
         to: u64,
         message: Message,
     ) -> Result<(), MessagingError> {
         if let Some(dest_sender) = self.node_senders.get(&to) {
-            info!("Routing message from node {} to node {}", from, to);
+            debug!("Network routing message from {} to {}: {:?}", from, to, message);
             dest_sender.send(message).await.map_err(|e| {
-                error!("Error sending message to node {}: {}", to, e);
+                error!("Network failed to route message from {} to {}: {}", from, to, e);
                 MessagingError::SendError(to)
             })
         } else {
-            warn!("Destination node {} not found", to);
+            warn!("Network: Destination node {} not found for message from {}", to, from);
             Err(MessagingError::NodeNotFound(to))
         }
-    }
-
-    /// Broadcast a message to all nodes
-    pub async fn broadcast(&self, from: u64, message: Message) -> Result<(), MessagingError> {
-        for (node_id, node_sender) in &self.node_senders {
-            // Don't send message to itself
-            if *node_id != from {
-                info!("Broadcasting message from node {} to node {}", from, node_id);
-                node_sender.send(message.clone()).await.map_err(|e| {
-                    error!("Error sending message to node {}: {}", node_id, e);
-                    MessagingError::SendError(*node_id)
-                })?;
-            }
-        }
-        Ok(())
     }
 
     /// Returns the number of nodes in the network.
     pub fn get_nodes_count(&self) -> usize {
         self.node_senders.len()
+    }
+
+    /// Returns all node IDs in the network.
+    pub fn get_all_node_ids(&self) -> Vec<u64> {
+        self.node_senders.keys().cloned().collect()
     }
 }
