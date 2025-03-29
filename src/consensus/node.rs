@@ -22,6 +22,7 @@ pub struct Node {
     receiver: NodeReceiver,
     log: Vec<LogEntry>,
     commit_index: u64,
+    votes_received: u64,
 }
 
 // Node getters
@@ -133,6 +134,7 @@ impl Node {
             receiver,
             log: vec![],
             commit_index: 0,
+            votes_received: 0,
         }
     }
 
@@ -145,11 +147,13 @@ impl Node {
                     self.voted_for = None;
                 }
                 self.state = NodeState::Follower;
+                self.votes_received = 0;
             }
             NodeState::Candidate => {
                 self.current_term = term.max(self.current_term);
                 self.state = NodeState::Candidate;
                 self.voted_for = Some(self.id);
+                self.votes_received = 1; // add self vote
             }
             NodeState::Leader => {
                 self.current_term = term.max(self.current_term);
@@ -246,6 +250,62 @@ impl Node {
             );
         }
 
+        Ok(())
+    }
+
+    pub async fn handle_vote_response(
+        &mut self,
+        term: u64,
+        vote_granted: bool,
+    ) -> Result<(), ConsensusError> {
+        if !matches!(self.state, NodeState::Candidate) {
+            println!(
+                "Node {} received VoteResponse but is no longer a candidate. Ignoring.",
+                self.id
+            );
+            return Ok(());
+        }
+
+        if term > self.current_term {
+            self.transition_to(NodeState::Follower, term);
+            return Ok(());
+        }
+
+        if vote_granted {
+            println!("Node {} received vote, total votes: {}", self.id, self.votes_received + 1);
+            self.votes_received += 1;
+        } else {
+            println!(
+                "Node {} received vote rejection, total votes: {}",
+                self.id, self.votes_received
+            );
+        }
+
+        // TODO: remove hardcoded number of nodes
+        if self.votes_received >= 5 {
+            println!("Node {} received majority of votes, becoming leader", self.id);
+            self.transition_to(NodeState::Leader, self.current_term);
+        }
+
+        Ok(())
+    }
+
+    /// Continuously process incoming messages.
+    pub async fn process_incoming_messages(&mut self) -> Result<(), ConsensusError> {
+        while let Ok(message) = self.receive_message().await {
+            match message {
+                Message::VoteRequest { term, candidate_id } => {
+                    self.handle_request_vote(term, candidate_id).await?;
+                }
+                Message::VoteResponse { term, vote_granted } => {
+                    self.handle_vote_response(term, vote_granted).await?;
+                }
+                // TODO: append related messages
+                _ => {
+                    println!("Node {} received unknown message: {:?}", self.id, message);
+                }
+            }
+        }
         Ok(())
     }
 }
