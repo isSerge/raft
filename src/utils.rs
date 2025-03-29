@@ -1,9 +1,14 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
+
+use tokio::sync::Mutex;
 
 use crate::consensus::Node;
 
-pub fn print_node_state(nodes: &HashMap<u64, Node>) {
+/// Print the state of all nodes in the network.
+pub async fn print_node_state(nodes: &HashMap<u64, Arc<Mutex<Node>>>) {
     for (id, node) in nodes {
+        let node = node.lock().await;
+
         println!(
             "Node {}: state: {:?}, term: {}, voted_for: {:?}, log: {:?}, state_machine: {:?}, \
              commit_index: {}",
