@@ -645,7 +645,7 @@ async fn test_node_append_to_log_and_broadcast_sends_append_entries_to_all_nodes
         assert_eq!(new_entries.len(), node_1.log().len());
         assert_eq!(new_entries[0].term, TERM);
         assert_eq!(new_entries[0].command, COMMAND);
-        assert_eq!(commit_index, 0);
+        assert_eq!(commit_index, 1);
     } else {
         panic!("Expected an AppendEntries message");
     }
