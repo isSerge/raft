@@ -184,6 +184,7 @@ async fn test_node_broadcast_vote_request_sends_message_to_all_nodes() {
 #[tokio::test]
 async fn test_node_send_append_response() {
     const TERM: u64 = 1;
+    const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
     // get the nodes
@@ -211,9 +212,10 @@ async fn test_node_send_append_response() {
     // node 1 receives append response from node 2
     let response_message = node_1.receive_message().await;
 
-    if let Ok(Message::AppendResponse { term, success }) = response_message {
+    if let Ok(Message::AppendResponse { term, success, from_id }) = response_message {
         assert_eq!(term, TERM);
         assert!(success);
+        assert_eq!(from_id, NODE_ID_2);
     } else {
         panic!("Expected an AppendResponse message");
     }
@@ -222,6 +224,7 @@ async fn test_node_send_append_response() {
 #[tokio::test]
 async fn test_node_send_vote_response() {
     const TERM: u64 = 21;
+    const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
     // get the nodes
@@ -247,9 +250,10 @@ async fn test_node_send_vote_response() {
     // node 1 receives vote response from node 2
     let response_message = node_1.receive_message().await;
 
-    if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+    if let Ok(Message::VoteResponse { term, vote_granted, from_id }) = response_message {
         assert_eq!(term, TERM);
         assert!(vote_granted);
+        assert_eq!(from_id, NODE_ID_2);
     } else {
         panic!("Expected a VoteResponse message");
     }
@@ -259,6 +263,7 @@ async fn test_node_send_vote_response() {
 async fn test_node_handle_request_vote_rejects_older_term() {
     const NODE_1_TERM: u64 = 1;
     const NODE_2_TERM: u64 = NODE_1_TERM + 1;
+    const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
     // get the nodes
@@ -283,9 +288,10 @@ async fn test_node_handle_request_vote_rejects_older_term() {
 
         // check that the vote response is a rejection
         let response_message = node_1.receive_message().await;
-        if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+        if let Ok(Message::VoteResponse { term, vote_granted, from_id }) = response_message {
             assert_eq!(term, NODE_2_TERM);
             assert!(!vote_granted);
+            assert_eq!(from_id, NODE_ID_2);
         } else {
             panic!("Expected a VoteResponse message");
         }
@@ -298,6 +304,7 @@ async fn test_node_handle_request_vote_rejects_older_term() {
 async fn test_node_handle_request_vote_accepts_newer_term() {
     const NODE_1_TERM: u64 = 10;
     const NODE_2_TERM: u64 = NODE_1_TERM - 1;
+    const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
     // get the nodes
@@ -322,9 +329,10 @@ async fn test_node_handle_request_vote_accepts_newer_term() {
 
         // check that the vote response is a rejection
         let response_message = node_1.receive_message().await;
-        if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+        if let Ok(Message::VoteResponse { term, vote_granted, from_id }) = response_message {
             assert_eq!(term, NODE_1_TERM);
             assert!(vote_granted);
+            assert_eq!(from_id, NODE_ID_2);
         } else {
             panic!("Expected a VoteResponse message");
         }
@@ -337,6 +345,7 @@ async fn test_node_handle_request_vote_accepts_newer_term() {
 async fn test_node_handle_request_vote_accepts_equal_term() {
     const NODE_1_TERM: u64 = 10;
     const NODE_2_TERM: u64 = NODE_1_TERM;
+    const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
     // get the nodes
@@ -361,9 +370,10 @@ async fn test_node_handle_request_vote_accepts_equal_term() {
 
         // check that the vote response is a rejection
         let response_message = node_1.receive_message().await;
-        if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+        if let Ok(Message::VoteResponse { term, vote_granted, from_id }) = response_message {
             assert_eq!(term, NODE_1_TERM);
             assert!(vote_granted);
+            assert_eq!(from_id, NODE_ID_2);
         } else {
             panic!("Expected a VoteResponse message");
         }
@@ -376,6 +386,7 @@ async fn test_node_handle_request_vote_accepts_equal_term() {
 async fn test_node_handle_request_vote_rejects_if_already_voted() {
     const NODE_1_TERM: u64 = 10;
     const NODE_2_TERM: u64 = NODE_1_TERM;
+    const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
     // get the nodes
@@ -404,9 +415,10 @@ async fn test_node_handle_request_vote_rejects_if_already_voted() {
 
         // check that the vote response is a rejection
         let response_message = node_1.receive_message().await;
-        if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+        if let Ok(Message::VoteResponse { term, vote_granted, from_id }) = response_message {
             assert_eq!(term, NODE_1_TERM);
             assert!(!vote_granted);
+            assert_eq!(from_id, NODE_ID_2);
         } else {
             panic!("Expected a VoteResponse message");
         }
@@ -418,6 +430,7 @@ async fn test_node_handle_request_vote_rejects_if_already_voted() {
 #[tokio::test]
 async fn test_node_handle_request_vote_accepts_if_not_voted() {
     const NODE_1_TERM: u64 = 10;
+    const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
     // get the nodes
@@ -445,9 +458,10 @@ async fn test_node_handle_request_vote_accepts_if_not_voted() {
 
         // check that the vote response is a rejection
         let response_message = node_1.receive_message().await;
-        if let Ok(Message::VoteResponse { term, vote_granted }) = response_message {
+        if let Ok(Message::VoteResponse { term, vote_granted, from_id }) = response_message {
             assert_eq!(term, NODE_1_TERM);
             assert!(vote_granted);
+            assert_eq!(from_id, NODE_ID_2);
         } else {
             panic!("Expected a VoteResponse message");
         }
@@ -460,6 +474,7 @@ async fn test_node_handle_request_vote_accepts_if_not_voted() {
 async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
     const NODE_1_TERM: u64 = 10;
     const NODE_2_TERM: u64 = NODE_1_TERM + 1; // higher term
+    const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
     // get the nodes
@@ -486,9 +501,10 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
 
         // check that the append response is a rejection
         let response_message = node_1.receive_message().await;
-        if let Ok(Message::AppendResponse { term, success }) = response_message {
+        if let Ok(Message::AppendResponse { term, success, from_id }) = response_message {
             assert_eq!(term, NODE_2_TERM);
             assert!(!success);
+            assert_eq!(from_id, NODE_ID_2);
         } else {
             panic!("Expected an AppendResponse message");
         }
@@ -501,6 +517,7 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
 async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
     const NODE_1_TERM: u64 = 10; // higher term
     const NODE_2_TERM: u64 = NODE_1_TERM - 1;
+    const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
     // get the nodes
@@ -527,9 +544,10 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
 
         // check that the append response is a rejection
         let response_message = node_1.receive_message().await;
-        if let Ok(Message::AppendResponse { term, success }) = response_message {
+        if let Ok(Message::AppendResponse { term, success, from_id }) = response_message {
             assert_eq!(term, NODE_1_TERM);
             assert!(success);
+            assert_eq!(from_id, NODE_ID_2);
         } else {
             panic!("Expected an AppendResponse message");
         }
@@ -541,6 +559,7 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
 #[tokio::test]
 async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
     const NODE_TERM: u64 = 10; // same term for both nodes
+    const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
     // get the nodes
@@ -567,9 +586,10 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
 
         // check that the append response is a rejection
         let response_message = node_1.receive_message().await;
-        if let Ok(Message::AppendResponse { term, success }) = response_message {
+        if let Ok(Message::AppendResponse { term, success, from_id }) = response_message {
             assert_eq!(term, NODE_TERM);
             assert!(success);
+            assert_eq!(from_id, NODE_ID_2);
         } else {
             panic!("Expected an AppendResponse message");
         }
@@ -579,7 +599,7 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
 }
 
 #[tokio::test]
-async fn test_node_append_to_log_and_broadcast_updates_log_andstate_machine() {
+async fn test_node_append_to_log_and_broadcast_updates_log_and_state_machine() {
     const NODE_ID: u64 = 0;
     const TERM: u64 = 1;
     const COMMAND: &str = "test command";

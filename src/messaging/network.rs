@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use log::{error, info};
+
 use crate::messaging::{Message, MessagingError, NodeMessenger};
 
 /// A network of nodes
@@ -26,10 +28,10 @@ impl Network {
         message: Message,
     ) -> Result<(), MessagingError> {
         if let Some(dest) = self.nodes.get(&to) {
-            println!("Routing message from node {} to node {}", from, to);
+            info!("Routing message from node {} to node {}", from, to);
             dest.send(message).await.map_err(|_| MessagingError::SendError)
         } else {
-            eprintln!("Destination node {} not found", to);
+            error!("Destination node {} not found", to);
             Err(MessagingError::NodeNotFound(to))
         }
     }
@@ -39,7 +41,7 @@ impl Network {
         for (node_id, node_messenger) in &self.nodes {
             // Don't send message to itself
             if *node_id != from {
-                println!("Broadcasting message from node {} to node {}", from, node_id);
+                info!("Broadcasting message from node {} to node {}", from, node_id);
                 node_messenger
                     .send(message.clone())
                     .await

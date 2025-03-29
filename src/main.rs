@@ -4,7 +4,8 @@ mod state_machine;
 mod utils;
 use std::{collections::HashMap, sync::Arc};
 
-use consensus::{ConsensusError, Node, NodeState};
+use consensus::{ConsensusError, Node};
+use log::error;
 use messaging::{Network, NodeMessenger};
 use state_machine::StateMachine;
 use tokio::sync::Mutex;
@@ -19,9 +20,7 @@ async fn simulate_election(
 
     // Update node state (transition to candidate) and then drop the lock
     let mut candidate = candidate_arc.lock().await;
-    let election_term = candidate.current_term() + 1;
-    candidate.transition_to(NodeState::Candidate, election_term);
-    candidate.broadcast_vote_request().await?;
+    candidate.start_election().await?;
 
     Ok(())
 }
@@ -54,7 +53,7 @@ async fn main() -> Result<(), ConsensusError> {
         tokio::spawn(async move {
             let node_id = node_arc.lock().await.id();
             if let Err(e) = node_arc.lock().await.process_incoming_messages().await {
-                eprintln!("Node {} error: {}", node_id, e);
+                error!("Node {} error: {}", node_id, e);
             }
         });
     }
