@@ -13,6 +13,7 @@ impl Network {
         Self { nodes: HashMap::new() }
     }
 
+    /// Adds a node to the network.
     pub fn add_node(&mut self, node_id: u64, node_messenger: NodeMessenger) {
         self.nodes.insert(node_id, node_messenger);
     }

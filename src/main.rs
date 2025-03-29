@@ -2,25 +2,35 @@ mod consensus;
 mod messaging;
 mod state_machine;
 mod utils;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use consensus::{ConsensusError, Node, NodeState};
 use messaging::{Message, Network, NodeMessenger};
 use state_machine::StateMachine;
 use tokio::sync::Mutex;
-use utils::{partition_nodes_mut, print_node_state};
+use utils::print_node_state;
 
-async fn simulate_election(nodes: &mut [Node], candidate_id: u64) -> Result<(), ConsensusError> {
+async fn simulate_election(
+    nodes: &mut HashMap<u64, Node>,
+    candidate_id: u64,
+) -> Result<(), ConsensusError> {
     // Get nodes count first to avoid mutable borrow issues
     let nodes_count = nodes.len();
 
-    // Get candidate and other nodes
-    let (candidate, others) = partition_nodes_mut(nodes, candidate_id)?;
+    // Get candidate by temp removing it from the nodes map
+    let mut candidate =
+        nodes.remove(&candidate_id).ok_or(ConsensusError::NodeNotFound(candidate_id))?;
+
+    // Get other nodes
+    let others: Vec<&mut Node> = nodes.values_mut().collect();
 
     // 1. Transition to candidate state and broadcast vote request
     if candidate.state() != NodeState::Follower {
+        // Reinsert candidate back before returning error.
+        nodes.insert(candidate_id, candidate);
         return Err(ConsensusError::NotFollower(candidate_id));
     }
+
     let election_term = candidate.current_term() + 1;
     candidate.transition_to(NodeState::Candidate, election_term);
     candidate.broadcast_vote_request().await?;
@@ -61,12 +71,22 @@ async fn simulate_election(nodes: &mut [Node], candidate_id: u64) -> Result<(), 
         );
     }
 
+    // Reinsert the candidate back into the map.
+    nodes.insert(candidate_id, candidate);
+
     print_node_state(nodes);
     Ok(())
 }
 
-async fn simulate_append_entries(nodes: &mut [Node], leader_id: u64) -> Result<(), ConsensusError> {
-    let (leader, others) = partition_nodes_mut(nodes, leader_id)?;
+async fn simulate_append_entries(
+    nodes: &mut HashMap<u64, Node>,
+    leader_id: u64,
+) -> Result<(), ConsensusError> {
+    // Get leader by temp removing it from the nodes map
+    let mut leader = nodes.remove(&leader_id).ok_or(ConsensusError::NodeNotFound(leader_id))?;
+
+    // Get other nodes
+    let others: Vec<&mut Node> = nodes.values_mut().collect();
 
     // Leader appends a new command to its own log and broadcasts it to all other
     // nodes.
@@ -81,6 +101,9 @@ async fn simulate_append_entries(nodes: &mut [Node], leader_id: u64) -> Result<(
         }
     }
 
+    // Reinsert the leader back into the map.
+    nodes.insert(leader_id, leader);
+
     print_node_state(nodes);
 
     Ok(())
@@ -89,12 +112,12 @@ async fn simulate_append_entries(nodes: &mut [Node], leader_id: u64) -> Result<(
 #[tokio::main]
 async fn main() -> Result<(), ConsensusError> {
     let network = Arc::new(Mutex::new(Network::new()));
-    let mut nodes: Vec<Node> = Vec::new();
+    let mut nodes: HashMap<u64, Node> = HashMap::new();
 
     for id in 0..5 {
         let (node_messenger, node_receiver) = NodeMessenger::new(network.clone());
         let node = Node::new(id, StateMachine::new(), node_messenger.clone(), node_receiver);
-        nodes.push(node);
+        nodes.insert(id, node);
         network.lock().await.add_node(id, node_messenger);
     }
 
