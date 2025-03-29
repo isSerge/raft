@@ -286,7 +286,7 @@ impl Node {
             );
         }
 
-        let majority_count = self.messenger.get_nodes_count().await.unwrap() as u64 / 2;
+        let majority_count = self.messenger.get_nodes_count().await.unwrap() as u64 / 2 + 1;
 
         if self.votes_received >= majority_count {
             println!("Node {} received majority of votes, becoming leader", self.id);
