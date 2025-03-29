@@ -1,23 +1,25 @@
 use std::collections::HashMap;
 
-use log::{error, info};
+use log::{error, info, warn};
+use tokio::sync::mpsc;
 
-use crate::messaging::{Message, MessagingError, NodeMessenger};
+use crate::messaging::{Message, MessagingError};
 
 /// A network of nodes
 #[derive(Debug)]
 pub struct Network {
-    nodes: HashMap<u64, NodeMessenger>,
+    node_senders: HashMap<u64, mpsc::Sender<Message>>,
 }
 
 impl Network {
     pub fn new() -> Self {
-        Self { nodes: HashMap::new() }
+        Self { node_senders: HashMap::new() }
     }
 
     /// Add a node to the network
-    pub fn add_node(&mut self, node_id: u64, node_messenger: NodeMessenger) {
-        self.nodes.insert(node_id, node_messenger);
+    pub fn add_node(&mut self, node_id: u64, node_sender: mpsc::Sender<Message>) {
+        info!("Adding Node {} to network", node_id);
+        self.node_senders.insert(node_id, node_sender);
     }
 
     /// Send a message to a specific node
@@ -27,25 +29,28 @@ impl Network {
         to: u64,
         message: Message,
     ) -> Result<(), MessagingError> {
-        if let Some(dest) = self.nodes.get(&to) {
+        if let Some(dest_sender) = self.node_senders.get(&to) {
             info!("Routing message from node {} to node {}", from, to);
-            dest.send(message).await.map_err(|_| MessagingError::SendError)
+            dest_sender.send(message).await.map_err(|e| {
+                error!("Error sending message to node {}: {}", to, e);
+                MessagingError::SendError(to)
+            })
         } else {
-            error!("Destination node {} not found", to);
+            warn!("Destination node {} not found", to);
             Err(MessagingError::NodeNotFound(to))
         }
     }
 
     /// Broadcast a message to all nodes
     pub async fn broadcast(&self, from: u64, message: Message) -> Result<(), MessagingError> {
-        for (node_id, node_messenger) in &self.nodes {
+        for (node_id, node_sender) in &self.node_senders {
             // Don't send message to itself
             if *node_id != from {
                 info!("Broadcasting message from node {} to node {}", from, node_id);
-                node_messenger
-                    .send(message.clone())
-                    .await
-                    .map_err(|_| MessagingError::SendError)?;
+                node_sender.send(message.clone()).await.map_err(|e| {
+                    error!("Error sending message to node {}: {}", node_id, e);
+                    MessagingError::SendError(*node_id)
+                })?;
             }
         }
         Ok(())
@@ -53,6 +58,6 @@ impl Network {
 
     /// Returns the number of nodes in the network.
     pub fn get_nodes_count(&self) -> usize {
-        self.nodes.len()
+        self.node_senders.len()
     }
 }

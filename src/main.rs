@@ -45,11 +45,11 @@ async fn main() -> Result<(), ConsensusError> {
     let mut nodes: HashMap<u64, Arc<Mutex<Node>>> = HashMap::new();
 
     for id in 0..5 {
-        let (node_messenger, node_receiver) = NodeMessenger::new(network.clone());
+        let (node_messenger, node_receiver) = NodeMessenger::new(id, network.clone());
         let node = Node::new(id, StateMachine::new(), node_messenger.clone(), node_receiver);
         let node_arc = Arc::new(Mutex::new(node));
         nodes.insert(id, node_arc.clone());
-        network.lock().await.add_node(id, node_messenger);
+        network.lock().await.add_node(id, node_messenger.sender.clone());
         tokio::spawn(async move {
             let node_id = node_arc.lock().await.id();
             if let Err(e) = node_arc.lock().await.process_incoming_messages().await {

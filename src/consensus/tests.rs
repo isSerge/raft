@@ -18,9 +18,9 @@ async fn create_network(number_of_nodes: usize) -> Vec<Node> {
     let network = Arc::new(Mutex::new(Network::new()));
     let mut nodes = Vec::new();
     for i in 0..number_of_nodes {
-        let (node_messenger, node_receiver) = NodeMessenger::new(network.clone());
+        let (node_messenger, node_receiver) = NodeMessenger::new(i as u64, network.clone());
         let node = create_node(i as u64, node_messenger.clone(), node_receiver);
-        network.lock().await.add_node(i as u64, node_messenger);
+        network.lock().await.add_node(i as u64, node_messenger.sender.clone());
         nodes.push(node);
     }
 
