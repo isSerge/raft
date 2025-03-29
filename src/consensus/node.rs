@@ -296,6 +296,14 @@ impl Node {
         Ok(())
     }
 
+    pub async fn handle_append_response(
+        &mut self,
+        term: u64,
+        success: bool,
+    ) -> Result<(), ConsensusError> {
+        unimplemented!()
+    }
+
     /// Continuously process incoming messages.
     pub async fn process_incoming_messages(&mut self) -> Result<(), ConsensusError> {
         loop {
@@ -308,6 +316,13 @@ impl Node {
                 Message::VoteResponse { term, vote_granted } => {
                     self.handle_vote_response(term, vote_granted).await?;
                 }
+                Message::AppendEntries { term, leader_id, new_entries, commit_index } => {
+                    self.handle_append_entries(term, leader_id, &new_entries, commit_index).await?;
+                }
+                Message::AppendResponse { term, success } => {
+                    self.handle_append_response(term, success).await?;
+                }
+
                 // TODO: append related messages
                 _ => {
                     println!("Node {} received unknown message: {:?}", self.id, message);
