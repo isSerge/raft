@@ -145,7 +145,7 @@ impl NodeServer {
     pub async fn start_election(&mut self) -> Result<(), ConsensusError> {
         let new_term = self.core.current_term() + 1;
         info!("Node {} starting election for term {}", self.id, new_term);
-        self.core.transition_to(NodeState::Candidate, new_term);
+        self.core.transition_to_candidate(new_term);
         self.broadcast_vote_request().await
     }
 
@@ -166,7 +166,7 @@ impl NodeServer {
         // 2. If candidate_term is greater than current_term, convert to follower and
         //    reset voted_for
         if candidate_term > self.core.current_term() {
-            self.core.transition_to(NodeState::Follower, candidate_term);
+            self.core.transition_to_follower(candidate_term);
         }
 
         // 3. Vote if we haven't voted yet.
@@ -214,14 +214,14 @@ impl NodeServer {
                 "Node {} sees newer term {} from Leader Node {}, transitioning to Follower.",
                 self.id, leader_term, leader_id
             );
-            self.core.transition_to(NodeState::Follower, leader_term);
+            self.core.transition_to_follower(leader_term);
         } else if self.core.state() == NodeState::Candidate {
             info!(
                 "Node {} sees valid term {} from Leader Node {}, transtioning to Follower.",
                 self.id, leader_term, leader_id
             );
 
-            self.core.transition_to(NodeState::Follower, leader_term);
+            self.core.transition_to_follower(leader_term);
         } else {
             debug!("Node {} acknowledges Leader {} in term {}", self.id, leader_id, leader_term);
         }
@@ -294,7 +294,7 @@ impl NodeServer {
                  Follower.",
                 self.id, term, voter_id
             );
-            self.core.transition_to(NodeState::Follower, term);
+            self.core.transition_to_follower(term);
             return Ok(());
         }
 
@@ -326,7 +326,7 @@ impl NodeServer {
                 total_nodes,
                 self.core.current_term()
             );
-            self.core.transition_to(NodeState::Leader, self.core.current_term());
+            self.core.transition_to_leader(self.core.current_term());
 
             // Send an empty AppendEntries to all other nodes to establish leadership.
             self.broadcast_append_entries(vec![]).await?;
@@ -364,7 +364,7 @@ impl NodeServer {
                  transitioning to Follower.",
                 self.id, term, from_id
             );
-            self.core.transition_to(NodeState::Follower, term);
+            self.core.transition_to_follower(term);
             return Ok(());
         }
 

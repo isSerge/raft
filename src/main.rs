@@ -81,5 +81,13 @@ async fn main() -> Result<(), ConsensusError> {
     info!("Waiting for election process...");
     tokio::time::sleep(Duration::from_secs(3)).await;
 
+    info!("Starting append entries for node 1");
+    send_command_to_node(
+        &nodes_messengers,
+        0,
+        Message::StartAppendEntriesCmd { command: "Hello, world!".to_string() },
+    )
+    .await?;
+
     Ok(())
 }

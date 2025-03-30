@@ -85,30 +85,29 @@ impl NodeCore {
         Self { id, ..Default::default() }
     }
 
-    // TODO: add more conditions
-    /// Transition to a new state.
-    pub fn transition_to(&mut self, state: NodeState, term: u64) {
-        match state {
-            NodeState::Follower => {
-                if term > self.current_term() {
-                    self.current_term = term;
-                    self.voted_for = None;
-                }
-                self.state = NodeState::Follower;
-                self.votes_received = 0;
-            }
-            NodeState::Candidate => {
-                self.current_term = term.max(self.current_term());
-                self.state = NodeState::Candidate;
-                self.voted_for = Some(self.id);
-                self.votes_received = 1; // add self vote
-            }
-            NodeState::Leader => {
-                self.current_term = term.max(self.current_term());
-                self.state = NodeState::Leader;
-                self.voted_for = Some(self.id);
-            }
+    /// Transition to a follower state.
+    pub fn transition_to_follower(&mut self, term: u64) {
+        if term > self.current_term() {
+            self.current_term = term;
+            self.voted_for = None;
         }
+        self.state = NodeState::Follower;
+        self.votes_received = 0;
+    }
+
+    /// Transition to a candidate state.
+    pub fn transition_to_candidate(&mut self, term: u64) {
+        self.current_term = term.max(self.current_term());
+        self.state = NodeState::Candidate;
+        self.voted_for = Some(self.id);
+        self.votes_received = 1; // add self vote
+    }
+
+    /// Transition to a leader state.
+    pub fn transition_to_leader(&mut self, term: u64) {
+        self.current_term = term.max(self.current_term());
+        self.state = NodeState::Leader;
+        self.voted_for = Some(self.id);
     }
 
     /// Append log entries to the node's log.
@@ -143,6 +142,7 @@ impl NodeCore {
         }
     }
 
+    /// Append a new entry to the leader's log.
     pub fn leader_append_entry(&mut self, command: String) -> bool {
         if self.state != NodeState::Leader {
             warn!("Node {} tried to append entry but is not a Leader", self.id);
@@ -154,11 +154,12 @@ impl NodeCore {
         true
     }
 
+    /// Update the commit index of the leader.
     pub fn leader_update_commit_index(
         &mut self,
         from_id: u64,
         success: bool,
-        total_nodes: u64,
+        __total_nodes: u64,
     ) -> Option<(u64, u64)> {
         if self.state != NodeState::Leader {
             warn!("Node {} tried to update commit index but is not a Leader", self.id);
