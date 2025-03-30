@@ -160,6 +160,7 @@ impl Node {
         self.broadcast_vote_request().await
     }
 
+    // TODO: add more conditions
     /// Transition to a new state.
     pub fn transition_to(&mut self, state: NodeState, term: u64) {
         match state {
@@ -270,10 +271,7 @@ impl Node {
         self.send_append_response(leader_id, true).await
     }
 
-    pub async fn append_to_log_and_broadcast(
-        &mut self,
-        command: String,
-    ) -> Result<(), ConsensusError> {
+    pub async fn start_append_entries(&mut self, command: String) -> Result<(), ConsensusError> {
         // Ensure that only a leader can append a new command.
         if !matches!(self.state, NodeState::Leader) {
             return Err(ConsensusError::NotLeader(self.id));
@@ -285,26 +283,11 @@ impl Node {
         info!("Leader Node {} appended new log entry: {:?}", self.id, new_entry);
 
         // Broadcast the new log entry to all other nodes.
-        self.broadcast_append_entries(vec![new_entry]).await?;
-
-        // Wait for a majority of responses and update commit index and state machine.
-        // TODO: should wait for AppendResponse from other nodes
-        let majority_acknowledged = true;
-        if majority_acknowledged {
-            // Update commit index to the new log length.
-            self.commit_index = self.log.len() as u64;
-            // Now apply the log entry to the leader's state machine.
-            self.state_machine.apply(1);
-            info!(
-                "Leader Node {} committed log entry and updated its state machine. Commit index: \
-                 {}",
-                self.id, self.commit_index
-            );
-        }
-
-        Ok(())
+        self.broadcast_append_entries(vec![new_entry]).await
     }
 
+    /// Handle a vote response from a voter. Used by candidates to collect
+    /// votes.
     pub async fn handle_vote_response(
         &mut self,
         term: u64,
@@ -363,6 +346,8 @@ impl Node {
         Ok(())
     }
 
+    /// Handle an AppendResponse from a follower. Used by leaders to
+    /// determine if they have received a majority of responses.
     pub async fn handle_append_response(
         &mut self,
         term: u64,
@@ -373,7 +358,49 @@ impl Node {
             "Node {} (Leader) received AppendResponse from follower {} for term {} (Success: {})",
             self.id, from_id, term, success
         );
-        unimplemented!();
+
+        // 1. Check if the node is still a leader.
+        if !matches!(self.state, NodeState::Leader) {
+            debug!(
+                "Node {} (Leader) received AppendResponse but is no longer a Leader. Ignoring.",
+                self.id
+            );
+            return Ok(());
+        }
+
+        // 2. Check if the term is newer.
+        if term > self.current_term {
+            info!(
+                "Node {} (Leader) sees newer term {} in AppendResponse from follower {}, \
+                 transitioning to Follower.",
+                self.id, term, from_id
+            );
+            self.transition_to(NodeState::Follower, term);
+            return Ok(());
+        }
+
+        // 3. Ignore if the term is older.
+        if term < self.current_term {
+            debug!(
+                "Node {} (Leader) received stale AppendResponse from Node {} for term {}. \
+                 Ignoring.",
+                self.id, from_id, term
+            );
+            return Ok(());
+        }
+
+        // 4. If the response is successful, update the commit index.
+        if success {
+            info!("Follower node {} accepted entries", from_id);
+            self.commit_index = self.log.len() as u64;
+            self.state_machine.apply(1);
+        } else {
+            warn!("Follower node {} rejected entries", from_id);
+
+            // TODO: retry appending entries
+        }
+
+        Ok(())
     }
 
     /// Continuously process incoming messages.
@@ -399,6 +426,9 @@ impl Node {
                     }
                     Message::StartElectionCmd => {
                         self.start_election().await?;
+                    }
+                    Message::StartAppendEntriesCmd { ref command } => {
+                        self.start_append_entries(command.clone()).await?;
                     }
                 },
                 Err(e) => {

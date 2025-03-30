@@ -16,4 +16,6 @@ pub enum Message {
     // Commands
     /// Command to start an election
     StartElectionCmd,
+    /// Command to append a new entry to the log
+    StartAppendEntriesCmd { command: String },
 }

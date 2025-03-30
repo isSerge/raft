@@ -666,7 +666,7 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
 }
 
 #[tokio::test]
-async fn test_node_append_to_log_and_broadcast_updates_log_and_state_machine() {
+async fn test_node_start_append_entries_updates_log() {
     const NODE_ID: u64 = 0;
     const TERM: u64 = 1;
     const COMMAND: &str = "test command";
@@ -681,18 +681,16 @@ async fn test_node_append_to_log_and_broadcast_updates_log_and_state_machine() {
     assert_eq!(node.state_machine.get_state(), 0);
 
     // append to log and broadcast
-    node.append_to_log_and_broadcast(COMMAND.to_string()).await.unwrap();
+    node.start_append_entries(COMMAND.to_string()).await.unwrap();
 
     // check that the log has the new entry
     assert_eq!(node.log().len(), 1);
     assert_eq!(node.log()[0].term, TERM);
     assert_eq!(node.log()[0].command, COMMAND);
-    // check that the state machine value was incremented
-    assert_eq!(node.state_machine.get_state(), 1);
 }
 
 #[tokio::test]
-async fn test_node_append_to_log_and_broadcast_rejects_if_not_leader() {
+async fn test_node_start_append_entries_rejects_if_not_leader() {
     const NODE_ID: u64 = 0;
     const COMMAND: &str = "test command";
     let mut nodes = create_network(1).await;
@@ -704,13 +702,13 @@ async fn test_node_append_to_log_and_broadcast_rejects_if_not_leader() {
     assert_eq!(node.state_machine.get_state(), 0);
 
     // append to log and broadcast
-    let result = node.append_to_log_and_broadcast(COMMAND.to_string()).await;
+    let result = node.start_append_entries(COMMAND.to_string()).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), ConsensusError::NotLeader(NODE_ID));
 }
 
 #[tokio::test]
-async fn test_node_append_to_log_and_broadcast_sends_append_entries_to_all_nodes() {
+async fn test_node_start_append_entries_sends_append_entries_to_all_nodes() {
     const NODE_ID: u64 = 0;
     const TERM: u64 = 1;
     const COMMAND: &str = "test command";
@@ -721,7 +719,7 @@ async fn test_node_append_to_log_and_broadcast_sends_append_entries_to_all_nodes
     node_1.transition_to(NodeState::Leader, TERM);
 
     // append to log and broadcast
-    node_1.append_to_log_and_broadcast(COMMAND.to_string()).await.unwrap();
+    node_1.start_append_entries(COMMAND.to_string()).await.unwrap();
 
     // check that the log has the new entry
     assert_eq!(node_1.log().len(), 1);
