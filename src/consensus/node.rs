@@ -118,14 +118,20 @@ impl Node {
         &self,
         new_entries: Vec<LogEntry>,
     ) -> Result<(), ConsensusError> {
+        info!(
+            "Node {} (Leader Term: {}) broadcasting AppendEntries: commit_index={}, entries={}",
+            self.id,
+            self.current_term,
+            self.commit_index,
+            new_entries.len()
+        );
+
         let msg = Message::AppendEntries {
             term: self.current_term,
             leader_id: self.id,
             new_entries,
-            commit_index: self.log.len() as u64, /* assuming immediate commit, TODO: update
-                                                  * commit_index after majority of responses */
+            commit_index: self.commit_index,
         };
-        info!("Node {} broadcasting AppendEntries: {:?}", self.id, msg);
         self.broadcast(msg).await
     }
 }
@@ -436,6 +442,9 @@ impl Node {
                     return Err(e);
                 }
             }
+
+            // Yield to other tasks to prevent busy-waiting
+            tokio::task::yield_now().await;
         }
     }
 }
