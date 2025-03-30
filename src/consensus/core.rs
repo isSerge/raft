@@ -65,6 +65,10 @@ impl NodeCore {
         &self.log
     }
 
+    pub fn log_entry_at_index(&self, index: u64) -> Option<&LogEntry> {
+        self.log.get(index as usize)
+    }
+
     pub fn commit_index(&self) -> u64 {
         self.commit_index
     }
@@ -79,6 +83,11 @@ impl NodeCore {
 
     pub fn log_last_index(&self) -> u64 {
         self.log.len() as u64
+    }
+
+    /// Get the last term of the log.
+    pub fn log_last_term(&self) -> u64 {
+        self.log.last().map_or(0, |entry| entry.term)
     }
 }
 
