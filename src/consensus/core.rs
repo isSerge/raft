@@ -65,8 +65,10 @@ impl NodeCore {
         &self.log
     }
 
-    pub fn log_entry_at_index(&self, index: u64) -> Option<&LogEntry> {
-        self.log.get(index as usize)
+    /// Get the log entry at the given Raft index.
+    /// Raft index is 1-based, but Vec index is 0-based.
+    pub fn log_entry_at_index(&self, raft_index: u64) -> Option<&LogEntry> {
+        if raft_index > 0 { self.log.get((raft_index - 1) as usize) } else { None }
     }
 
     pub fn commit_index(&self) -> u64 {
@@ -81,6 +83,7 @@ impl NodeCore {
         self.last_applied
     }
 
+    /// Get the last index of the log (1-based).
     pub fn log_last_index(&self) -> u64 {
         self.log.len() as u64
     }
