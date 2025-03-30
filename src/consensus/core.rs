@@ -15,14 +15,31 @@ pub enum NodeState {
 
 #[derive(Debug, Default)]
 pub struct NodeCore {
+    /// The id of the node.
     id: u64,
-    state: NodeState,
+
+    // TODO: add to persistent storage
+    /// The current term of the node.
     current_term: u64,
+    /// The node that the node has voted for.
     voted_for: Option<u64>,
+    /// The log of the node.
     log: Vec<LogEntry>,
+
+    // Volatile state
+    /// The commit index of the node.
     commit_index: u64,
-    votes_received: u64,
+    /// The last applied index of the node.
     last_applied: u64,
+    /// The state of the node.
+    state: NodeState,
+
+    // Candidate only
+    /// The number of votes received by the node.
+    votes_received: u64,
+
+    // Leader only
+    /// The next index of the node for each node.
     next_index: HashMap<u64, u64>,
 }
 
