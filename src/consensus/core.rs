@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::{cmp::Ordering, collections::HashMap};
 
 use log::{debug, info, warn};
 
 use crate::consensus::LogEntry;
 
+/// The state of a node in the consensus protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NodeState {
     #[default]
@@ -23,7 +24,6 @@ pub struct NodeCore {
     votes_received: u64,
     last_applied: u64,
     next_index: HashMap<u64, u64>,
-    match_index: HashMap<u64, u64>,
 }
 
 // Getters
@@ -67,14 +67,31 @@ impl NodeCore {
 
 // Setters
 impl NodeCore {
+    /// Set the last applied index.
     pub fn set_last_applied(&mut self, last_applied: u64) {
-        self.last_applied = last_applied;
+        match last_applied.cmp(&self.last_applied) {
+            Ordering::Greater => {
+                self.last_applied = last_applied;
+                debug!("Node {} updated last_applied to {}", self.id, self.last_applied);
+            }
+            Ordering::Less => {
+                warn!(
+                    "Node {} attempted to set last_applied to {} (lower than current {})",
+                    self.id, last_applied, self.last_applied
+                );
+            }
+            Ordering::Equal => {
+                debug!("Node {} last_applied is already {}", self.id, self.last_applied);
+            }
+        }
     }
 
+    /// Set the voted for node.
     pub fn set_voted_for(&mut self, voted_for: Option<u64>) {
         self.voted_for = voted_for;
     }
 
+    /// Increment the votes received.
     pub fn increment_votes_received(&mut self) {
         self.votes_received += 1;
     }
@@ -204,5 +221,11 @@ impl NodeCore {
         }
 
         None // Commit index did not change (or failure occurred)
+    }
+
+    /// Check if the log is consistent with another log.
+    // TODO: Implement this.
+    pub fn check_log_consistency(&self) -> bool {
+        true
     }
 }

@@ -226,8 +226,7 @@ impl NodeServer {
             debug!("Node {} acknowledges Leader {} in term {}", self.id, leader_id, leader_term);
         }
 
-        // TODO: check log consistency
-        let is_log_consistent = true;
+        let is_log_consistent = self.core.check_log_consistency();
 
         if !is_log_consistent {
             warn!(
