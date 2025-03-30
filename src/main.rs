@@ -19,8 +19,7 @@ async fn send_command_to_node(
     if let Some(messenger) = nodes_messengers.get(&node_id) {
         // Use send_self because the command originates "externally" but targets the
         // node's loop
-        let msg_arc = Arc::new(message);
-        messenger.send_self(msg_arc).await.map_err(ConsensusError::Transport)
+        messenger.send_self(message).await.map_err(ConsensusError::Transport)
     } else {
         Err(ConsensusError::NodeNotFound(node_id))
     }
@@ -35,7 +34,7 @@ async fn main() -> Result<(), ConsensusError> {
     let mut nodes: HashMap<u64, Arc<Mutex<Node>>> = HashMap::new();
     let mut nodes_messengers: HashMap<u64, NodeMessenger> = HashMap::new();
 
-    let node_count = 5;
+    let node_count = 2;
     info!("Setting up {} nodes...", node_count);
 
     for id in 0..node_count {

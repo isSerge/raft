@@ -41,6 +41,16 @@ impl NodeMessenger {
         (Self { id, network, sender }, NodeReceiver::new(id, receiver))
     }
 
+    /// Internal helper - takes Arc<Message> and DOES NOT lock network
+    async fn send_via_network_unlocked(
+        network: &Network, // Takes unlocked network reference
+        from_id: u64,
+        to: u64,
+        msg_arc: Arc<Message>,
+    ) -> Result<(), MessagingError> {
+        network.route_message(from_id, to, msg_arc).await // Call route_message directly
+    }
+
     /// Sends a message to a specific node using the global Network.
     pub async fn send_to(&self, to: u64, msg_arc: Arc<Message>) -> Result<(), MessagingError> {
         debug!("Node {} sending message to {}: {:?}", self.id, to, msg_arc);
@@ -55,7 +65,8 @@ impl NodeMessenger {
 
     /// Sends a message directly into this node's *own* queue (e.g., for
     /// commands). Uses the node's own ID as the sender.
-    pub async fn send_self(&self, msg_arc: Arc<Message>) -> Result<(), MessagingError> {
+    pub async fn send_self(&self, message: Message) -> Result<(), MessagingError> {
+        let msg_arc = Arc::new(message);
         self.sender.send(msg_arc).await.map_err(|e| {
             error!("Node {} failed to send message to self: {}", self.id, e);
             MessagingError::SendError(self.id)
@@ -66,7 +77,7 @@ impl NodeMessenger {
     /// Internal helper used by send_to and broadcast.
     async fn send_via_network(&self, to: u64, msg_arc: Arc<Message>) -> Result<(), MessagingError> {
         let network = self.network.lock().await;
-        network.route_message(self.id, to, msg_arc).await
+        Self::send_via_network_unlocked(&network, self.id, to, msg_arc).await
     }
 
     /// Broadcasts a message to all *other* nodes using the global Network.
@@ -77,8 +88,6 @@ impl NodeMessenger {
         // Get all node IDs from the network
         let network_locked = self.network.lock().await;
         let all_node_ids: Vec<u64> = network_locked.get_all_node_ids();
-        // Drop the lock before sending messages
-        drop(network_locked);
 
         let mut errors = Vec::new();
         for node_id in all_node_ids {
@@ -86,7 +95,14 @@ impl NodeMessenger {
                 // Clone message Arc for each node
                 let msg_arc_clone = Arc::clone(&msg_arc);
                 // Don't broadcast to self
-                if let Err(e) = self.send_via_network(node_id, msg_arc_clone).await {
+                if let Err(e) = Self::send_via_network_unlocked(
+                    &network_locked,
+                    self.id,
+                    node_id,
+                    msg_arc_clone,
+                )
+                .await
+                {
                     error!("Node {} failed to broadcast to node {}: {:?}", self.id, node_id, e);
                     // Collect errors
                     errors.push(e);
