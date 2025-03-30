@@ -725,6 +725,7 @@ async fn test_node_start_append_entries_sends_append_entries_to_all_nodes() {
     assert_eq!(node_1.log().len(), 1);
     assert_eq!(node_1.log()[0].term, TERM);
     assert_eq!(node_1.log()[0].command, COMMAND);
+    assert_eq!(node_1.commit_index(), 0);
 
     // check that node 2 received the append entries
     let message = node_2.receive_message().await;
@@ -737,7 +738,7 @@ async fn test_node_start_append_entries_sends_append_entries_to_all_nodes() {
             assert_eq!(new_entries.len(), node_1.log().len());
             assert_eq!(new_entries[0].term, TERM);
             assert_eq!(new_entries[0].command, COMMAND);
-            assert_eq!(commit_index, 1);
+            assert_eq!(commit_index, 0); // should not change, updated after majority of responses
         } else {
             panic!("Expected an AppendEntries message");
         }
