@@ -1,9 +1,12 @@
+mod core;
 mod error;
 mod log_entry;
-mod node;
+mod server;
 #[cfg(test)]
 mod tests;
 
+pub use core::*;
+
 pub use error::ConsensusError;
 pub use log_entry::LogEntry;
-pub use node::*;
+pub use server::*;

@@ -3,34 +3,23 @@ use std::sync::Arc;
 use log::{debug, error, info, warn};
 
 use crate::{
-    consensus::{ConsensusError, LogEntry},
+    consensus::{ConsensusError, LogEntry, NodeCore, NodeState},
     messaging::{Message, NodeMessenger, NodeReceiver},
     state_machine::StateMachine,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeState {
-    Leader,
-    Follower,
-    Candidate,
-}
-
 #[derive(Debug)]
-pub struct Node {
+pub struct NodeServer {
     id: u64,
-    state: NodeState,
-    current_term: u64,
-    voted_for: Option<u64>,
+    // TODO: make private after tests are updated
+    pub core: NodeCore,
     pub state_machine: StateMachine,
     messenger: NodeMessenger,
     receiver: NodeReceiver,
-    log: Vec<LogEntry>,
-    commit_index: u64,
-    votes_received: u64,
 }
 
-// Node getters
-impl Node {
+// NodeServer getters
+impl NodeServer {
     /// Get the node's ID.
     pub fn id(&self) -> u64 {
         self.id
@@ -38,37 +27,38 @@ impl Node {
 
     /// Get the node's current state.
     pub fn state(&self) -> NodeState {
-        self.state
+        self.core.state()
     }
 
     /// Get the current term.
     pub fn current_term(&self) -> u64 {
-        self.current_term
+        self.core.current_term()
     }
 
     /// Get the node that this node voted for.
     pub fn voted_for(&self) -> Option<u64> {
-        self.voted_for
+        self.core.voted_for()
     }
 
     /// Get the log.
     pub fn log(&self) -> &[LogEntry] {
-        &self.log
+        self.core.log()
     }
 
     /// Get the commit index.
     pub fn commit_index(&self) -> u64 {
-        self.commit_index
+        self.core.commit_index()
     }
 
-    /// Get the number of votes received.
-    pub fn votes_received(&self) -> u64 {
-        self.votes_received
+    /// Get the last applied index.
+    pub fn last_applied(&self) -> u64 {
+        self.core.last_applied()
     }
 }
 
-// Node message methods (thin wrappers around messenger and receiver methods)
-impl Node {
+// NodeServer message methods (thin wrappers around messenger and receiver
+// methods)
+impl NodeServer {
     /// Receive a message from the network.
     pub async fn receive_message(&mut self) -> Result<Arc<Message>, ConsensusError> {
         self.receiver.receive().await.map_err(ConsensusError::Transport)
@@ -85,7 +75,8 @@ impl Node {
         leader_id: u64,
         success: bool,
     ) -> Result<(), ConsensusError> {
-        let msg = Message::AppendResponse { term: self.current_term, success, from_id: self.id };
+        let msg =
+            Message::AppendResponse { term: self.core.current_term(), success, from_id: self.id };
         info!("Node {} sending AppendResponse to leader {}: {:?}", self.id, leader_id, msg);
         self.messenger.send_to(leader_id, Arc::new(msg)).await.map_err(ConsensusError::Transport)
     }
@@ -96,19 +87,23 @@ impl Node {
         candidate_id: u64,
         vote_granted: bool,
     ) -> Result<(), ConsensusError> {
-        let msg = Message::VoteResponse { term: self.current_term, vote_granted, from_id: self.id };
+        let msg = Message::VoteResponse {
+            term: self.core.current_term(),
+            vote_granted,
+            from_id: self.id,
+        };
         info!("Node {} sending VoteResponse to candidate {}: {:?}", self.id, candidate_id, msg);
         self.messenger.send_to(candidate_id, Arc::new(msg)).await.map_err(ConsensusError::Transport)
     }
 
     /// Broadcast a vote request to all other nodes.
     pub async fn broadcast_vote_request(&self) -> Result<(), ConsensusError> {
-        if !matches!(self.state, NodeState::Candidate) {
+        if !matches!(self.core.state(), NodeState::Candidate) {
             warn!("Node {} tried to broadcast vote request but is not Candidate", self.id);
             return Err(ConsensusError::NotCandidate(self.id));
         }
 
-        let msg = Message::VoteRequest { term: self.current_term, candidate_id: self.id };
+        let msg = Message::VoteRequest { term: self.core.current_term(), candidate_id: self.id };
         info!("Node {} broadcasting VoteRequest: {:?}", self.id, msg);
         self.broadcast(msg).await
     }
@@ -121,75 +116,37 @@ impl Node {
         info!(
             "Node {} (Leader Term: {}) broadcasting AppendEntries: commit_index={}, entries={}",
             self.id,
-            self.current_term,
-            self.commit_index,
+            self.core.current_term(),
+            self.core.commit_index(),
             new_entries.len()
         );
 
         let msg = Message::AppendEntries {
-            term: self.current_term,
+            term: self.core.current_term(),
             leader_id: self.id,
             new_entries,
-            commit_index: self.commit_index,
+            commit_index: self.core.commit_index(),
         };
         self.broadcast(msg).await
     }
 }
 
-// Node core methods
-impl Node {
+impl NodeServer {
     pub fn new(
         id: u64,
         state_machine: StateMachine,
         messenger: NodeMessenger,
         receiver: NodeReceiver,
     ) -> Self {
-        Self {
-            id,
-            state: NodeState::Follower,
-            current_term: 0,
-            voted_for: None,
-            state_machine,
-            messenger,
-            receiver,
-            log: vec![],
-            commit_index: 0,
-            votes_received: 0,
-        }
+        Self { id, core: NodeCore::new(id), state_machine, messenger, receiver }
     }
 
     /// Start an election.
     pub async fn start_election(&mut self) -> Result<(), ConsensusError> {
-        let new_term = self.current_term + 1;
+        let new_term = self.core.current_term() + 1;
         info!("Node {} starting election for term {}", self.id, new_term);
-        self.transition_to(NodeState::Candidate, new_term);
+        self.core.transition_to(NodeState::Candidate, new_term);
         self.broadcast_vote_request().await
-    }
-
-    // TODO: add more conditions
-    /// Transition to a new state.
-    pub fn transition_to(&mut self, state: NodeState, term: u64) {
-        match state {
-            NodeState::Follower => {
-                if term > self.current_term {
-                    self.current_term = term;
-                    self.voted_for = None;
-                }
-                self.state = NodeState::Follower;
-                self.votes_received = 0;
-            }
-            NodeState::Candidate => {
-                self.current_term = term.max(self.current_term);
-                self.state = NodeState::Candidate;
-                self.voted_for = Some(self.id);
-                self.votes_received = 1; // add self vote
-            }
-            NodeState::Leader => {
-                self.current_term = term.max(self.current_term);
-                self.state = NodeState::Leader;
-                self.voted_for = Some(self.id);
-            }
-        }
     }
 
     /// Handle a request vote from a candidate
@@ -203,19 +160,19 @@ impl Node {
             self.id, candidate_id, candidate_term
         );
         // 1. If candidate_term is older than current_term, reject
-        if candidate_term < self.current_term {
+        if candidate_term < self.core.current_term() {
             return self.send_vote_response(candidate_id, false).await;
         }
         // 2. If candidate_term is greater than current_term, convert to follower and
         //    reset voted_for
-        if candidate_term > self.current_term {
-            self.transition_to(NodeState::Follower, candidate_term);
+        if candidate_term > self.core.current_term() {
+            self.core.transition_to(NodeState::Follower, candidate_term);
         }
 
         // 3. Vote if we haven't voted yet.
-        let can_vote = self.voted_for.is_none_or(|voted_for| voted_for == candidate_id);
+        let can_vote = self.core.voted_for().is_none_or(|voted_for| voted_for == candidate_id);
         if can_vote {
-            self.voted_for = Some(candidate_id);
+            self.core.set_voted_for(Some(candidate_id));
         }
 
         self.send_vote_response(candidate_id, can_vote).await
@@ -240,28 +197,31 @@ impl Node {
         );
 
         // 1. If leader_term is older than current_term, reject
-        if leader_term < self.current_term {
+        if leader_term < self.core.current_term() {
             warn!(
                 "Node {} rejecting AppendEntries from Node {} (LeaderTerm {} < CurrentTerm {})",
-                self.id, leader_id, leader_term, self.current_term
+                self.id,
+                leader_id,
+                leader_term,
+                self.core.current_term()
             );
             return self.send_append_response(leader_id, false).await;
         }
 
         // 2. If leader_term is equal or greater than current_term:
-        if leader_term > self.current_term {
+        if leader_term > self.core.current_term() {
             info!(
                 "Node {} sees newer term {} from Leader Node {}, transitioning to Follower.",
                 self.id, leader_term, leader_id
             );
-            self.transition_to(NodeState::Follower, leader_term);
-        } else if self.state == NodeState::Candidate {
+            self.core.transition_to(NodeState::Follower, leader_term);
+        } else if self.core.state() == NodeState::Candidate {
             info!(
                 "Node {} sees valid term {} from Leader Node {}, transtioning to Follower.",
                 self.id, leader_term, leader_id
             );
 
-            self.transition_to(NodeState::Follower, self.current_term);
+            self.core.transition_to(NodeState::Follower, leader_term);
         } else {
             debug!("Node {} acknowledges Leader {} in term {}", self.id, leader_id, leader_term);
         }
@@ -277,61 +237,15 @@ impl Node {
             return self.send_append_response(leader_id, false).await;
         }
 
-        // 3 append log entries to own log
+        // 3. append log entries to own log
         info!("Node {} appending {} entries from Leader {}", self.id, new_entries.len(), leader_id);
-        self.log.extend_from_slice(new_entries);
+        self.core.append_log_entries(new_entries.to_vec());
 
         // 4. update commit_index
-        let old_commit_index = self.commit_index;
-        let follower_commit_limit = self.log.len() as u64;
-        if leader_commit_index > old_commit_index {
-            self.commit_index = leader_commit_index.min(follower_commit_limit);
-            if self.commit_index > old_commit_index {
-                // Log only if changed
-                info!(
-                    "Node {} updated commit_index from {} to {} (leader_commit: {})",
-                    self.id, old_commit_index, self.commit_index, leader_commit_index
-                );
-            } else {
-                // Log if leader's commit is ahead but capped by our log length
-                debug!(
-                    "Node {} commit_index update capped at {} (leader_commit: {})",
-                    self.id, self.commit_index, leader_commit_index
-                );
-            }
+        self.core.follower_update_commit_index(leader_commit_index);
 
-            // 5. Apply newly committed entries to the state machine
-            // Iterate from the entry *after* the old commit index up to the *new* commit
-            // index
-            for i in old_commit_index..self.commit_index {
-                // Get the log entry reference (index i corresponds to log[i])
-                if let Some(entry) = self.log.get(i as usize) {
-                    info!(
-                        "Node {} applying committed log[{}] ('{}') to state machine.",
-                        self.id,
-                        i,
-                        entry.command, // Log the command being applied
-                    );
-
-                    self.state_machine.apply(1);
-                    info!(
-                        "   -> Node {} new state machine value: {}",
-                        self.id,
-                        self.state_machine.get_state()
-                    );
-                } else {
-                    // This should ideally not happen if commit_index <= self.log.len()
-                    error!(
-                        "Node {} CRITICAL: Tried to apply non-existent log entry at index {} \
-                         (commit_index={}, log_len={})",
-                        self.id,
-                        i,
-                        self.commit_index,
-                        self.log.len()
-                    );
-                }
-            }
-        }
+        // 5. apply log entries to state machine
+        self.apply_committed_entries();
 
         // 6. send response to leader
         self.send_append_response(leader_id, true).await
@@ -339,17 +253,19 @@ impl Node {
 
     pub async fn start_append_entries(&mut self, command: String) -> Result<(), ConsensusError> {
         // Ensure that only a leader can append a new command.
-        if !matches!(self.state, NodeState::Leader) {
+        if !matches!(self.core.state(), NodeState::Leader) {
             return Err(ConsensusError::NotLeader(self.id));
         }
 
-        // Append the new entry to the log.
-        let new_entry = LogEntry::new(self.current_term, command);
-        self.log.push(new_entry.clone());
-        info!("Leader Node {} appended new log entry: {:?}", self.id, new_entry);
+        // Delegate appending to the core.
+        if self.core.leader_append_entry(command.clone()) {
+            let new_entry = LogEntry::new(self.core.current_term(), command);
 
-        // Broadcast the new log entry to all other nodes.
-        self.broadcast_append_entries(vec![new_entry]).await
+            // Broadcast the new log entry to all other nodes.
+            self.broadcast_append_entries(vec![new_entry]).await
+        } else {
+            Ok(())
+        }
     }
 
     /// Handle a vote response from a voter. Used by candidates to collect
@@ -364,7 +280,7 @@ impl Node {
             "Node {} received VoteResponse from Node {} for Term {} (Granted: {})",
             self.id, voter_id, term, vote_granted
         );
-        if !matches!(self.state, NodeState::Candidate) {
+        if !matches!(self.core.state(), NodeState::Candidate) {
             debug!(
                 "Node {} received VoteResponse but is no longer a Candidate. Ignoring.",
                 self.id
@@ -372,38 +288,45 @@ impl Node {
             return Ok(());
         }
 
-        if term > self.current_term {
+        if term > self.core.current_term() {
             info!(
                 "Node {} sees newer term {} in VoteResponse from Node {}, transitioning to \
                  Follower.",
                 self.id, term, voter_id
             );
-            self.transition_to(NodeState::Follower, term);
+            self.core.transition_to(NodeState::Follower, term);
             return Ok(());
         }
 
         if vote_granted {
-            self.votes_received += 1;
+            self.core.increment_votes_received();
             info!(
                 "Node {} received vote from Node {}, total votes: {}",
-                self.id, voter_id, self.votes_received
+                self.id,
+                voter_id,
+                self.core.votes_received()
             );
         } else {
             info!(
                 "Node {} received vote rejection from Node {}, total votes: {}",
-                self.id, voter_id, self.votes_received
+                self.id,
+                voter_id,
+                self.core.votes_received()
             );
         }
 
         let total_nodes = self.messenger.get_nodes_count().await? as u64;
         let majority_count = total_nodes / 2 + 1;
 
-        if self.votes_received >= majority_count {
+        if self.core.votes_received() >= majority_count {
             info!(
                 "Node {} received majority of votes ({}/{}), becoming Leader for Term {}",
-                self.id, self.votes_received, total_nodes, self.current_term
+                self.id,
+                self.core.votes_received(),
+                total_nodes,
+                self.core.current_term()
             );
-            self.transition_to(NodeState::Leader, self.current_term);
+            self.core.transition_to(NodeState::Leader, self.core.current_term());
 
             // Send an empty AppendEntries to all other nodes to establish leadership.
             self.broadcast_append_entries(vec![]).await?;
@@ -426,7 +349,7 @@ impl Node {
         );
 
         // 1. Check if the node is still a leader.
-        if !matches!(self.state, NodeState::Leader) {
+        if !matches!(self.core.state(), NodeState::Leader) {
             debug!(
                 "Node {} (Leader) received AppendResponse but is no longer a Leader. Ignoring.",
                 self.id
@@ -435,18 +358,18 @@ impl Node {
         }
 
         // 2. Check if the term is newer.
-        if term > self.current_term {
+        if term > self.core.current_term() {
             info!(
                 "Node {} (Leader) sees newer term {} in AppendResponse from follower {}, \
                  transitioning to Follower.",
                 self.id, term, from_id
             );
-            self.transition_to(NodeState::Follower, term);
+            self.core.transition_to(NodeState::Follower, term);
             return Ok(());
         }
 
         // 3. Ignore if the term is older.
-        if term < self.current_term {
+        if term < self.core.current_term() {
             debug!(
                 "Node {} (Leader) received stale AppendResponse from Node {} for term {}. \
                  Ignoring.",
@@ -455,18 +378,64 @@ impl Node {
             return Ok(());
         }
 
-        // 4. If the response is successful, update the commit index.
-        if success {
-            info!("Follower node {} accepted entries", from_id);
-            self.commit_index = self.log.len() as u64;
-            self.state_machine.apply(1);
-        } else {
-            warn!("Follower node {} rejected entries", from_id);
+        // 4. // Delegate commit index update logic to core
 
-            // TODO: retry appending entries
+        let total_nodes = self.messenger.get_nodes_count().await.unwrap_or(1);
+        let commit_result =
+            self.core.leader_update_commit_index(from_id, success, total_nodes as u64);
+
+        // If commit index advanced, apply to *leader's* state machine
+        if let Some((_old_ci, _new_ci)) = commit_result {
+            self.apply_committed_entries();
         }
 
+        // TODO: Trigger resend if success was false and next_index was decremented
+
         Ok(())
+    }
+
+    /// Apply committed log entries to the state machine.
+    fn apply_committed_entries(&mut self) {
+        let commit_idx = self.core.commit_index();
+        let mut last_applied = self.core.last_applied();
+
+        if commit_idx > last_applied {
+            info!(
+                "Node {} applying entries from index {} up to {}",
+                self.id(),
+                last_applied + 1,
+                commit_idx
+            );
+
+            for i in last_applied..commit_idx {
+                if let Some(entry) = self.core.log().get(i as usize) {
+                    info!(
+                        "Node {} applying log[{}] ('{}') to state machine.",
+                        self.id(),
+                        i,
+                        entry.command
+                    );
+                    // Apply the command to the state machine
+                    self.state_machine.apply(1);
+                    last_applied = i + 1; // Update last_applied *after* successful apply
+                    info!(
+                        "   -> Node {} new state machine value: {}",
+                        self.id(),
+                        self.state_machine.get_state()
+                    );
+                } else {
+                    error!(
+                        "Node {} CRITICAL: Tried to apply non-existent log entry at index {}",
+                        self.id(),
+                        i
+                    );
+                    break; // Stop applying if log entry missing
+                }
+            }
+
+            // Update core's last_applied state *after* the loop finishes
+            self.core.set_last_applied(last_applied);
+        }
     }
 
     /// Continuously process incoming messages.
@@ -494,7 +463,15 @@ impl Node {
                         self.start_election().await?;
                     }
                     Message::StartAppendEntriesCmd { ref command } => {
-                        self.start_append_entries(command.clone()).await?;
+                        if self.core.state() == NodeState::Leader {
+                            self.start_append_entries(command.clone()).await?;
+                        } else {
+                            warn!(
+                                "Node {} received StartAppendEntriesCmd but is not a Leader. \
+                                 Ignoring.",
+                                self.id
+                            );
+                        }
                     }
                 },
                 Err(e) => {

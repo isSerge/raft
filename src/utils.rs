@@ -3,10 +3,10 @@ use std::{collections::HashMap, sync::Arc};
 use log::info;
 use tokio::sync::Mutex;
 
-use crate::consensus::Node;
+use crate::consensus::NodeServer;
 
 /// Print the state of all nodes in the network.
-pub async fn print_node_state(nodes: &HashMap<u64, Arc<Mutex<Node>>>) {
+pub async fn print_node_state(nodes: &HashMap<u64, Arc<Mutex<NodeServer>>>) {
     for (id, node) in nodes {
         let node = node.lock().await;
 

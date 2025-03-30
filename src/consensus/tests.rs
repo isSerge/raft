@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::{
-    consensus::{ConsensusError, LogEntry, Node, NodeState},
+    consensus::{ConsensusError, LogEntry, NodeServer, NodeState},
     messaging::{Message, Network, NodeMessenger, NodeReceiver},
     state_machine::StateMachine,
 };
@@ -11,12 +11,12 @@ use crate::{
 // TODO: refactor tests to reduce boilerplate
 
 /// Create a new node with a given id, messenger, and receiver.
-fn create_node(id: u64, node_messenger: NodeMessenger, node_receiver: NodeReceiver) -> Node {
-    Node::new(id, StateMachine::new(), node_messenger, node_receiver)
+fn create_node(id: u64, node_messenger: NodeMessenger, node_receiver: NodeReceiver) -> NodeServer {
+    NodeServer::new(id, StateMachine::new(), node_messenger, node_receiver)
 }
 
 /// Create a new network with a given number of nodes.
-async fn create_network(number_of_nodes: usize) -> Vec<Node> {
+async fn create_network(number_of_nodes: usize) -> Vec<NodeServer> {
     let network = Arc::new(Mutex::new(Network::new()));
     let mut nodes = Vec::new();
     for i in 0..number_of_nodes {
@@ -31,7 +31,7 @@ async fn create_network(number_of_nodes: usize) -> Vec<Node> {
 
 /// Returns mutable references to the first two nodes in the slice.
 /// Panics if there are fewer than two nodes.
-fn get_two_nodes(nodes: &mut [Node]) -> (&mut Node, &mut Node) {
+fn get_two_nodes(nodes: &mut [NodeServer]) -> (&mut NodeServer, &mut NodeServer) {
     if let [node1, node2, ..] = nodes {
         (node1, node2)
     } else {
@@ -51,14 +51,12 @@ async fn test_node_transition_to_candidate_and_vote_for_self() {
     assert_eq!(node.state(), NodeState::Follower);
     assert_eq!(node.current_term(), 0);
     assert_eq!(node.voted_for(), None);
-    assert_eq!(node.votes_received(), 0);
 
-    node.transition_to(NodeState::Candidate, TERM);
+    node.core.transition_to(NodeState::Candidate, TERM);
 
     assert_eq!(node.state(), NodeState::Candidate);
     assert_eq!(node.current_term(), TERM);
     assert_eq!(node.voted_for(), Some(NODE_ID));
-    assert_eq!(node.votes_received(), 1);
 }
 
 #[tokio::test]
@@ -72,24 +70,21 @@ async fn test_node_transition_to_follower_and_reset_voted_for() {
     assert_eq!(node.state(), NodeState::Follower);
     assert_eq!(node.current_term(), 0);
     assert_eq!(node.voted_for(), None);
-    assert_eq!(node.votes_received(), 0);
 
-    node.transition_to(NodeState::Candidate, TERM);
+    node.core.transition_to(NodeState::Candidate, TERM);
 
     // check values after transition
     assert_eq!(node.state(), NodeState::Candidate);
     assert_eq!(node.current_term(), TERM);
     assert_eq!(node.voted_for(), Some(NODE_ID));
-    assert_eq!(node.votes_received(), 1);
 
     const NEW_TERM: u64 = TERM + 1; // Increment the term to trigger a transition to follower
 
-    node.transition_to(NodeState::Follower, NEW_TERM);
+    node.core.transition_to(NodeState::Follower, NEW_TERM);
 
     assert_eq!(node.state(), NodeState::Follower);
     assert_eq!(node.current_term(), NEW_TERM);
     assert_eq!(node.voted_for(), None);
-    assert_eq!(node.votes_received(), 0);
 }
 
 #[tokio::test]
@@ -103,7 +98,7 @@ async fn test_node_transition_to_leader() {
     assert_eq!(node.current_term(), 0);
     assert_eq!(node.voted_for(), None);
 
-    node.transition_to(NodeState::Leader, TERM);
+    node.core.transition_to(NodeState::Leader, TERM);
 
     assert_eq!(node.state(), NodeState::Leader);
     assert_eq!(node.current_term(), TERM);
@@ -133,7 +128,7 @@ async fn test_node_broadcast_append_entries_sends_message_to_all_nodes() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
-    node_1.transition_to(NodeState::Leader, TERM);
+    node_1.core.transition_to(NodeState::Leader, TERM);
 
     // broadcast append entries
     let log_entry = LogEntry::new(TERM, "test".to_string());
@@ -166,7 +161,7 @@ async fn test_node_broadcast_vote_request_sends_message_to_all_nodes() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
-    node_1.transition_to(NodeState::Candidate, TERM);
+    node_1.core.transition_to(NodeState::Candidate, TERM);
 
     // broadcast vote request
     let result = node_1.broadcast_vote_request().await;
@@ -198,7 +193,7 @@ async fn test_node_send_append_response() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
-    node_1.transition_to(NodeState::Leader, TERM);
+    node_1.core.transition_to(NodeState::Leader, TERM);
 
     // broadcast append entries
     let log_entry = LogEntry::new(TERM, "test".to_string());
@@ -245,7 +240,7 @@ async fn test_node_send_vote_response() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
-    node_1.transition_to(NodeState::Candidate, TERM);
+    node_1.core.transition_to(NodeState::Candidate, TERM);
 
     // broadcast vote request
     let result = node_1.broadcast_vote_request().await;
@@ -292,10 +287,10 @@ async fn test_node_handle_request_vote_rejects_older_term() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
-    node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
+    node_1.core.transition_to(NodeState::Candidate, NODE_1_TERM);
 
     // set higher term on node 2
-    node_2.transition_to(NodeState::Follower, NODE_2_TERM);
+    node_2.core.transition_to(NodeState::Follower, NODE_2_TERM);
 
     // node 1 broadcasts vote request
     let result = node_1.broadcast_vote_request().await;
@@ -339,10 +334,10 @@ async fn test_node_handle_request_vote_accepts_newer_term() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
-    node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
+    node_1.core.transition_to(NodeState::Candidate, NODE_1_TERM);
 
     // set lower term on node 2
-    node_2.transition_to(NodeState::Follower, NODE_2_TERM);
+    node_2.core.transition_to(NodeState::Follower, NODE_2_TERM);
 
     // node 1 broadcasts vote request
     let result = node_1.broadcast_vote_request().await;
@@ -386,10 +381,10 @@ async fn test_node_handle_request_vote_accepts_equal_term() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
-    node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
+    node_1.core.transition_to(NodeState::Candidate, NODE_1_TERM);
 
     // set lower term on node 2
-    node_2.transition_to(NodeState::Follower, NODE_2_TERM);
+    node_2.core.transition_to(NodeState::Follower, NODE_2_TERM);
 
     // node 1 broadcasts vote request
     let result = node_1.broadcast_vote_request().await;
@@ -433,10 +428,10 @@ async fn test_node_handle_request_vote_rejects_if_already_voted() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
-    node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
+    node_1.core.transition_to(NodeState::Candidate, NODE_1_TERM);
 
     // transition node 2 to follower
-    node_2.transition_to(NodeState::Candidate, NODE_2_TERM);
+    node_2.core.transition_to(NodeState::Candidate, NODE_2_TERM);
 
     // both should have same term and self as voted_for
     assert_eq!(node_1.voted_for(), Some(node_1.id()));
@@ -483,7 +478,7 @@ async fn test_node_handle_request_vote_accepts_if_not_voted() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
-    node_1.transition_to(NodeState::Candidate, NODE_1_TERM);
+    node_1.core.transition_to(NodeState::Candidate, NODE_1_TERM);
 
     // node 1 should have self as voted_for
     assert_eq!(node_1.voted_for(), Some(node_1.id()));
@@ -533,10 +528,10 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
-    node_1.transition_to(NodeState::Leader, NODE_1_TERM);
+    node_1.core.transition_to(NodeState::Leader, NODE_1_TERM);
 
     // set lower term on node 2
-    node_2.transition_to(NodeState::Follower, NODE_2_TERM);
+    node_2.core.transition_to(NodeState::Follower, NODE_2_TERM);
 
     // node 1 broadcasts append entries
     let log_entry = LogEntry::new(NODE_1_TERM, "test".to_string());
@@ -581,10 +576,10 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
-    node_1.transition_to(NodeState::Leader, NODE_1_TERM);
+    node_1.core.transition_to(NodeState::Leader, NODE_1_TERM);
 
     // set lower term on node 2
-    node_2.transition_to(NodeState::Follower, NODE_2_TERM);
+    node_2.core.transition_to(NodeState::Follower, NODE_2_TERM);
 
     // node 1 broadcasts append entries
     let log_entry = LogEntry::new(NODE_1_TERM, "test".to_string());
@@ -628,10 +623,10 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
-    node_1.transition_to(NodeState::Leader, NODE_TERM);
+    node_1.core.transition_to(NodeState::Leader, NODE_TERM);
 
     // set lower term on node 2
-    node_2.transition_to(NodeState::Follower, NODE_TERM);
+    node_2.core.transition_to(NodeState::Follower, NODE_TERM);
 
     // node 1 broadcasts append entries
     let log_entry = LogEntry::new(NODE_TERM, "test".to_string());
@@ -674,7 +669,7 @@ async fn test_node_start_append_entries_updates_log() {
     let node = &mut nodes[NODE_ID as usize];
 
     // transition to leader
-    node.transition_to(NodeState::Leader, TERM);
+    node.core.transition_to(NodeState::Leader, TERM);
 
     // check default values
     assert_eq!(node.log().len(), 0);
@@ -716,7 +711,7 @@ async fn test_node_start_append_entries_sends_append_entries_to_all_nodes() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
-    node_1.transition_to(NodeState::Leader, TERM);
+    node_1.core.transition_to(NodeState::Leader, TERM);
 
     // append to log and broadcast
     node_1.start_append_entries(COMMAND.to_string()).await.unwrap();

@@ -4,7 +4,7 @@ mod state_machine;
 mod utils;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use consensus::{ConsensusError, Node};
+use consensus::{ConsensusError, NodeServer};
 use log::{error, info};
 use messaging::{Message, Network, NodeMessenger};
 use state_machine::StateMachine;
@@ -27,11 +27,11 @@ async fn send_command_to_node(
 
 #[tokio::main]
 async fn main() -> Result<(), ConsensusError> {
-    // Initialize logging (e.g., using env_logger)
+    // Initialize logging
     env_logger::init();
 
     let network = Arc::new(Mutex::new(Network::new()));
-    let mut nodes: HashMap<u64, Arc<Mutex<Node>>> = HashMap::new();
+    let mut nodes: HashMap<u64, Arc<Mutex<NodeServer>>> = HashMap::new();
     let mut nodes_messengers: HashMap<u64, NodeMessenger> = HashMap::new();
 
     let node_count = 2;
@@ -48,18 +48,26 @@ async fn main() -> Result<(), ConsensusError> {
         nodes_messengers.insert(id, node_messenger.clone());
 
         // Create a new node
-        let node = Node::new(id, StateMachine::new(), node_messenger, node_receiver);
-        let node_arc = Arc::new(Mutex::new(node));
+        let node_server = NodeServer::new(id, StateMachine::new(), node_messenger, node_receiver);
+        let node_server_arc = Arc::new(Mutex::new(node_server));
         // Store the node in the nodes map
-        nodes.insert(id, node_arc.clone());
+        nodes.insert(id, node_server_arc.clone());
 
         // Spawn a new task to process incoming messages for the node
         tokio::spawn(async move {
-            let mut node_locked = node_arc.lock().await;
-            info!("Start processing messages for node {}", node_locked.id());
+            // Get the node id
+            let node_server_id;
+            {
+                let node_locked = node_server_arc.lock().await;
+                node_server_id = node_locked.id();
+            }
 
+            info!("Start processing messages for node {}", node_server_id);
+
+            // Process incoming messages
+            let mut node_locked = node_server_arc.lock().await;
             if let Err(e) = node_locked.process_incoming_messages().await {
-                error!("Node {} error: {}", node_locked.id(), e);
+                error!("Node {} error: {}", node_server_id, e);
             }
         });
     }
