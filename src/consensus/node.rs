@@ -238,7 +238,8 @@ impl Node {
             new_entries.len(),
             leader_commit_index
         );
-        // If leader_term is older than current_term, reject
+
+        // 1. If leader_term is older than current_term, reject
         if leader_term < self.current_term {
             warn!(
                 "Node {} rejecting AppendEntries from Node {} (LeaderTerm {} < CurrentTerm {})",
@@ -247,33 +248,92 @@ impl Node {
             return self.send_append_response(leader_id, false).await;
         }
 
-        // If leader_term is equal or greater than current_term:
-        info!(
-            "Node {} sees newer term {} from Leader Node {}, transitioning to Follower.",
-            self.id, leader_term, leader_id
-        );
-        // 1. convert to follower
-        self.transition_to(NodeState::Follower, leader_term);
+        // 2. If leader_term is equal or greater than current_term:
+        if leader_term > self.current_term {
+            info!(
+                "Node {} sees newer term {} from Leader Node {}, transitioning to Follower.",
+                self.id, leader_term, leader_id
+            );
+            self.transition_to(NodeState::Follower, leader_term);
+        } else if self.state == NodeState::Candidate {
+            info!(
+                "Node {} sees valid term {} from Leader Node {}, transtioning to Follower.",
+                self.id, leader_term, leader_id
+            );
 
-        // 2. append log entries to own log
+            self.transition_to(NodeState::Follower, self.current_term);
+        } else {
+            debug!("Node {} acknowledges Leader {} in term {}", self.id, leader_id, leader_term);
+        }
+
+        // TODO: check log consistency
+        let is_log_consistent = true;
+
+        if !is_log_consistent {
+            warn!(
+                "Node {} log is not consistent with Leader {} log. Rejecting AppendEntries.",
+                self.id, leader_id
+            );
+            return self.send_append_response(leader_id, false).await;
+        }
+
+        // 3 append log entries to own log
         info!("Node {} appending {} entries from Leader {}", self.id, new_entries.len(), leader_id);
         self.log.extend_from_slice(new_entries);
 
-        // 3. update commit_index
-        let upper_bound = self.log.len() as u64; // max possible commit index for this node
-        self.commit_index = leader_commit_index.min(upper_bound);
+        // 4. update commit_index
+        let old_commit_index = self.commit_index;
+        let follower_commit_limit = self.log.len() as u64;
+        if leader_commit_index > old_commit_index {
+            self.commit_index = leader_commit_index.min(follower_commit_limit);
+            if self.commit_index > old_commit_index {
+                // Log only if changed
+                info!(
+                    "Node {} updated commit_index from {} to {} (leader_commit: {})",
+                    self.id, old_commit_index, self.commit_index, leader_commit_index
+                );
+            } else {
+                // Log if leader's commit is ahead but capped by our log length
+                debug!(
+                    "Node {} commit_index update capped at {} (leader_commit: {})",
+                    self.id, self.commit_index, leader_commit_index
+                );
+            }
 
-        // 4. update state_machine
-        let new_state_value = (new_entries.len() - self.log.len()) as u64;
-        self.state_machine.apply(new_state_value);
-        info!(
-            "Node {} applied {} entries to state machine (new state: {})",
-            self.id,
-            new_state_value,
-            self.state_machine.get_state()
-        );
+            // 5. Apply newly committed entries to the state machine
+            // Iterate from the entry *after* the old commit index up to the *new* commit
+            // index
+            for i in old_commit_index..self.commit_index {
+                // Get the log entry reference (index i corresponds to log[i])
+                if let Some(entry) = self.log.get(i as usize) {
+                    info!(
+                        "Node {} applying committed log[{}] ('{}') to state machine.",
+                        self.id,
+                        i,
+                        entry.command, // Log the command being applied
+                    );
 
-        // 4. send response to leader
+                    self.state_machine.apply(1);
+                    info!(
+                        "   -> Node {} new state machine value: {}",
+                        self.id,
+                        self.state_machine.get_state()
+                    );
+                } else {
+                    // This should ideally not happen if commit_index <= self.log.len()
+                    error!(
+                        "Node {} CRITICAL: Tried to apply non-existent log entry at index {} \
+                         (commit_index={}, log_len={})",
+                        self.id,
+                        i,
+                        self.commit_index,
+                        self.log.len()
+                    );
+                }
+            }
+        }
+
+        // 6. send response to leader
         self.send_append_response(leader_id, true).await
     }
 
