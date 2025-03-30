@@ -11,25 +11,25 @@ pub struct NodeMessenger {
     id: u64,
     // TODO: create abstraction for network
     network: Arc<Mutex<Network>>,
-    pub sender: mpsc::Sender<Message>,
+    pub sender: mpsc::Sender<Arc<Message>>,
 }
 
 /// A receiver for messages from this node's own queue.
 #[derive(Debug)]
 pub struct NodeReceiver {
     id: u64,
-    receiver: mpsc::Receiver<Message>,
+    receiver: mpsc::Receiver<Arc<Message>>,
 }
 
 impl NodeReceiver {
-    pub fn new(id: u64, receiver: mpsc::Receiver<Message>) -> Self {
+    pub fn new(id: u64, receiver: mpsc::Receiver<Arc<Message>>) -> Self {
         Self { id, receiver }
     }
 
     /// Receives a message from this node's own queue.
-    pub async fn receive(&mut self) -> Result<Message, MessagingError> {
+    pub async fn receive(&mut self) -> Result<Arc<Message>, MessagingError> {
         match self.receiver.recv().await {
-            Some(message) => Ok(message),
+            Some(msg_arc) => Ok(msg_arc),
             None => Err(MessagingError::ReceiveError(self.id)),
         }
     }
@@ -42,9 +42,9 @@ impl NodeMessenger {
     }
 
     /// Sends a message to a specific node using the global Network.
-    pub async fn send_to(&self, to: u64, message: Message) -> Result<(), MessagingError> {
-        debug!("Node {} sending message to {}: {:?}", self.id, to, message);
-        self.send_via_network(to, message).await
+    pub async fn send_to(&self, to: u64, msg_arc: Arc<Message>) -> Result<(), MessagingError> {
+        debug!("Node {} sending message to {}: {:?}", self.id, to, msg_arc);
+        self.send_via_network(to, msg_arc).await
     }
 
     /// Returns the number of nodes in the network.
@@ -55,8 +55,8 @@ impl NodeMessenger {
 
     /// Sends a message directly into this node's *own* queue (e.g., for
     /// commands). Uses the node's own ID as the sender.
-    pub async fn send_self(&self, message: Message) -> Result<(), MessagingError> {
-        self.sender.send(message).await.map_err(|e| {
+    pub async fn send_self(&self, msg_arc: Arc<Message>) -> Result<(), MessagingError> {
+        self.sender.send(msg_arc).await.map_err(|e| {
             error!("Node {} failed to send message to self: {}", self.id, e);
             MessagingError::SendError(self.id)
         })
@@ -64,14 +64,16 @@ impl NodeMessenger {
 
     /// Sends a message intended for another node's queue via the Network.
     /// Internal helper used by send_to and broadcast.
-    async fn send_via_network(&self, to: u64, message: Message) -> Result<(), MessagingError> {
+    async fn send_via_network(&self, to: u64, msg_arc: Arc<Message>) -> Result<(), MessagingError> {
         let network = self.network.lock().await;
-        network.route_message(self.id, to, message).await
+        network.route_message(self.id, to, msg_arc).await
     }
 
     /// Broadcasts a message to all *other* nodes using the global Network.
     pub async fn broadcast(&self, message: Message) -> Result<(), MessagingError> {
         debug!("Node {} broadcasting message: {:?}", self.id, message);
+        // Create an Arc for the message to avoid cloning
+        let msg_arc = Arc::new(message);
         // Get all node IDs from the network
         let network_locked = self.network.lock().await;
         let all_node_ids: Vec<u64> = network_locked.get_all_node_ids();
@@ -81,8 +83,10 @@ impl NodeMessenger {
         let mut errors = Vec::new();
         for node_id in all_node_ids {
             if node_id != self.id {
+                // Clone message Arc for each node
+                let msg_arc_clone = Arc::clone(&msg_arc);
                 // Don't broadcast to self
-                if let Err(e) = self.send_via_network(node_id, message.clone()).await {
+                if let Err(e) = self.send_via_network(node_id, msg_arc_clone).await {
                     error!("Node {} failed to broadcast to node {}: {:?}", self.id, node_id, e);
                     // Collect errors
                     errors.push(e);

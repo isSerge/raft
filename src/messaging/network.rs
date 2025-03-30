@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use log::{debug, error, info, warn};
 use tokio::sync::mpsc;
@@ -8,7 +8,7 @@ use crate::messaging::{Message, MessagingError};
 /// A network of nodes
 #[derive(Debug)]
 pub struct Network {
-    node_senders: HashMap<u64, mpsc::Sender<Message>>,
+    node_senders: HashMap<u64, mpsc::Sender<Arc<Message>>>,
 }
 
 impl Network {
@@ -17,7 +17,7 @@ impl Network {
     }
 
     /// Add a node to the network
-    pub fn add_node(&mut self, node_id: u64, node_sender: mpsc::Sender<Message>) {
+    pub fn add_node(&mut self, node_id: u64, node_sender: mpsc::Sender<Arc<Message>>) {
         info!("Adding Node {} to network", node_id);
         self.node_senders.insert(node_id, node_sender);
     }
@@ -27,11 +27,11 @@ impl Network {
         &self,
         from: u64,
         to: u64,
-        message: Message,
+        msg_arc: Arc<Message>,
     ) -> Result<(), MessagingError> {
         if let Some(dest_sender) = self.node_senders.get(&to) {
-            debug!("Network routing message from {} to {}: {:?}", from, to, message);
-            dest_sender.send(message).await.map_err(|e| {
+            debug!("Network routing message from {} to {}: {:?}", from, to, msg_arc);
+            dest_sender.send(msg_arc).await.map_err(|e| {
                 error!("Network failed to route message from {} to {}: {}", from, to, e);
                 MessagingError::SendError(to)
             })

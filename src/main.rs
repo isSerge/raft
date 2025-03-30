@@ -19,7 +19,8 @@ async fn send_command_to_node(
     if let Some(messenger) = nodes_messengers.get(&node_id) {
         // Use send_self because the command originates "externally" but targets the
         // node's loop
-        messenger.send_self(message).await.map_err(ConsensusError::Transport)
+        let msg_arc = Arc::new(message);
+        messenger.send_self(msg_arc).await.map_err(ConsensusError::Transport)
     } else {
         Err(ConsensusError::NodeNotFound(node_id))
     }

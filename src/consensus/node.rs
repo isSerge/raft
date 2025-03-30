@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use log::{debug, error, info, warn};
 
 use crate::{
@@ -68,7 +70,7 @@ impl Node {
 // Node message methods (thin wrappers around messenger and receiver methods)
 impl Node {
     /// Receive a message from the network.
-    pub async fn receive_message(&mut self) -> Result<Message, ConsensusError> {
+    pub async fn receive_message(&mut self) -> Result<Arc<Message>, ConsensusError> {
         self.receiver.receive().await.map_err(ConsensusError::Transport)
     }
 
@@ -85,7 +87,7 @@ impl Node {
     ) -> Result<(), ConsensusError> {
         let msg = Message::AppendResponse { term: self.current_term, success, from_id: self.id };
         info!("Node {} sending AppendResponse to leader {}: {:?}", self.id, leader_id, msg);
-        self.messenger.send_to(leader_id, msg).await.map_err(ConsensusError::Transport)
+        self.messenger.send_to(leader_id, Arc::new(msg)).await.map_err(ConsensusError::Transport)
     }
 
     /// Send a VoteResponse to a candidate.
@@ -96,7 +98,7 @@ impl Node {
     ) -> Result<(), ConsensusError> {
         let msg = Message::VoteResponse { term: self.current_term, vote_granted, from_id: self.id };
         info!("Node {} sending VoteResponse to candidate {}: {:?}", self.id, candidate_id, msg);
-        self.messenger.send_to(candidate_id, msg).await.map_err(ConsensusError::Transport)
+        self.messenger.send_to(candidate_id, Arc::new(msg)).await.map_err(ConsensusError::Transport)
     }
 
     /// Broadcast a vote request to all other nodes.
@@ -378,24 +380,27 @@ impl Node {
     pub async fn process_incoming_messages(&mut self) -> Result<(), ConsensusError> {
         info!("Node {} starting message processing loop.", self.id);
         loop {
-            let message = self.receive_message().await;
+            let msg_arc = self.receive_message().await;
 
-            match message {
-                Ok(Message::VoteRequest { term, candidate_id }) => {
-                    self.handle_request_vote(term, candidate_id).await?;
-                }
-                Ok(Message::VoteResponse { term, vote_granted, from_id }) => {
-                    self.handle_vote_response(term, from_id, vote_granted).await?;
-                }
-                Ok(Message::AppendEntries { term, leader_id, new_entries, commit_index }) => {
-                    self.handle_append_entries(term, leader_id, &new_entries, commit_index).await?;
-                }
-                Ok(Message::AppendResponse { term, success, from_id }) => {
-                    self.handle_append_response(term, success, from_id).await?;
-                }
-                Ok(Message::StartElectionCmd) => {
-                    self.start_election().await?;
-                }
+            match msg_arc {
+                Ok(msg_arc) => match *msg_arc {
+                    Message::VoteRequest { term, candidate_id } => {
+                        self.handle_request_vote(term, candidate_id).await?;
+                    }
+                    Message::VoteResponse { term, vote_granted, from_id } => {
+                        self.handle_vote_response(term, from_id, vote_granted).await?;
+                    }
+                    Message::AppendEntries { term, leader_id, ref new_entries, commit_index } => {
+                        self.handle_append_entries(term, leader_id, new_entries, commit_index)
+                            .await?;
+                    }
+                    Message::AppendResponse { term, success, from_id } => {
+                        self.handle_append_response(term, success, from_id).await?;
+                    }
+                    Message::StartElectionCmd => {
+                        self.start_election().await?;
+                    }
+                },
                 Err(e) => {
                     error!("Node {} failed to receive message: {:?}. Stopping loop.", self.id, e);
                     return Err(e);

@@ -8,6 +8,8 @@ use crate::{
     state_machine::StateMachine,
 };
 
+// TODO: refactor tests to reduce boilerplate
+
 /// Create a new node with a given id, messenger, and receiver.
 fn create_node(id: u64, node_messenger: NodeMessenger, node_receiver: NodeReceiver) -> Node {
     Node::new(id, StateMachine::new(), node_messenger, node_receiver)
@@ -141,15 +143,16 @@ async fn test_node_broadcast_append_entries_sends_message_to_all_nodes() {
     let request_message = node_2.receive_message().await;
 
     // check that the message is an append entries request
-    if let Ok(Message::AppendEntries { term, leader_id, new_entries, commit_index }) =
-        request_message
-    {
-        assert_eq!(term, TERM);
-        assert_eq!(leader_id, NODE_ID);
-        assert_eq!(new_entries, vec![log_entry]);
-        assert_eq!(commit_index, 0);
-    } else {
-        panic!("Expected an AppendEntries message");
+    if let Ok(msg_arc) = request_message {
+        if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg_arc
+        {
+            assert_eq!(term, TERM);
+            assert_eq!(leader_id, NODE_ID);
+            assert_eq!(new_entries, &[log_entry]);
+            assert_eq!(commit_index, 0);
+        } else {
+            panic!("Expected an AppendEntries message");
+        }
     }
 }
 
@@ -173,9 +176,13 @@ async fn test_node_broadcast_vote_request_sends_message_to_all_nodes() {
     let message = node_2.receive_message().await;
 
     // check that the message is a vote request
-    if let Ok(Message::VoteRequest { term, candidate_id }) = message {
-        assert_eq!(term, TERM);
-        assert_eq!(candidate_id, NODE_ID_1);
+    if let Ok(msg_arc) = message {
+        if let Message::VoteRequest { term, candidate_id } = *msg_arc {
+            assert_eq!(term, TERM);
+            assert_eq!(candidate_id, NODE_ID_1);
+        } else {
+            panic!("Expected a VoteRequest message");
+        }
     } else {
         panic!("Expected a VoteRequest message");
     }
@@ -201,10 +208,13 @@ async fn test_node_send_append_response() {
     let request_message = node_2.receive_message().await;
 
     // handle append entries
-    if let Ok(Message::AppendEntries { term, leader_id, new_entries, commit_index }) =
-        request_message
-    {
-        node_2.handle_append_entries(term, leader_id, &new_entries, commit_index).await.unwrap();
+    if let Ok(msg_arc) = request_message {
+        if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg_arc
+        {
+            node_2.handle_append_entries(term, leader_id, new_entries, commit_index).await.unwrap();
+        } else {
+            panic!("Expected an AppendEntries message");
+        }
     } else {
         panic!("Expected an AppendEntries message");
     }
@@ -212,10 +222,14 @@ async fn test_node_send_append_response() {
     // node 1 receives append response from node 2
     let response_message = node_1.receive_message().await;
 
-    if let Ok(Message::AppendResponse { term, success, from_id }) = response_message {
-        assert_eq!(term, TERM);
-        assert!(success);
-        assert_eq!(from_id, NODE_ID_2);
+    if let Ok(msg_arc) = response_message {
+        if let Message::AppendResponse { term, success, from_id } = *msg_arc {
+            assert_eq!(term, TERM);
+            assert!(success);
+            assert_eq!(from_id, NODE_ID_2);
+        } else {
+            panic!("Expected an AppendResponse message");
+        }
     } else {
         panic!("Expected an AppendResponse message");
     }
@@ -241,8 +255,12 @@ async fn test_node_send_vote_response() {
     let message = node_2.receive_message().await;
 
     // handle vote request
-    if let Ok(Message::VoteRequest { term, candidate_id }) = message {
-        node_2.handle_request_vote(term, candidate_id).await.unwrap();
+    if let Ok(msg_arc) = message {
+        if let Message::VoteRequest { term, candidate_id } = *msg_arc {
+            node_2.handle_request_vote(term, candidate_id).await.unwrap();
+        } else {
+            panic!("Expected a VoteRequest message");
+        }
     } else {
         panic!("Expected a VoteRequest message");
     }
@@ -250,10 +268,14 @@ async fn test_node_send_vote_response() {
     // node 1 receives vote response from node 2
     let response_message = node_1.receive_message().await;
 
-    if let Ok(Message::VoteResponse { term, vote_granted, from_id }) = response_message {
-        assert_eq!(term, TERM);
-        assert!(vote_granted);
-        assert_eq!(from_id, NODE_ID_2);
+    if let Ok(msg_arc) = response_message {
+        if let Message::VoteResponse { term, vote_granted, from_id } = *msg_arc {
+            assert_eq!(term, TERM);
+            assert!(vote_granted);
+            assert_eq!(from_id, NODE_ID_2);
+        } else {
+            panic!("Expected a VoteResponse message");
+        }
     } else {
         panic!("Expected a VoteResponse message");
     }
@@ -283,20 +305,26 @@ async fn test_node_handle_request_vote_rejects_older_term() {
     let message = node_2.receive_message().await;
 
     // handle vote request from node 1
-    if let Ok(Message::VoteRequest { term, candidate_id }) = message {
-        node_2.handle_request_vote(term, candidate_id).await.unwrap();
+    if let Ok(msg_arc) = message {
+        if let Message::VoteRequest { term, candidate_id } = *msg_arc {
+            node_2.handle_request_vote(term, candidate_id).await.unwrap();
 
-        // check that the vote response is a rejection
-        let response_message = node_1.receive_message().await;
-        if let Ok(Message::VoteResponse { term, vote_granted, from_id }) = response_message {
-            assert_eq!(term, NODE_2_TERM);
-            assert!(!vote_granted);
-            assert_eq!(from_id, NODE_ID_2);
+            // check that the vote response is a rejection
+            let response_message = node_1.receive_message().await;
+            if let Ok(msg_arc) = response_message {
+                if let Message::VoteResponse { term, vote_granted, from_id } = *msg_arc {
+                    assert_eq!(term, NODE_2_TERM);
+                    assert!(!vote_granted);
+                    assert_eq!(from_id, NODE_ID_2);
+                } else {
+                    panic!("Expected a VoteResponse message");
+                }
+            } else {
+                panic!("Expected a VoteResponse message");
+            }
         } else {
-            panic!("Expected a VoteResponse message");
+            panic!("Expected a VoteRequest message");
         }
-    } else {
-        panic!("Expected a VoteRequest message");
     }
 }
 
@@ -324,20 +352,26 @@ async fn test_node_handle_request_vote_accepts_newer_term() {
     let message = node_2.receive_message().await;
 
     // handle vote request from node 1
-    if let Ok(Message::VoteRequest { term, candidate_id }) = message {
-        node_2.handle_request_vote(term, candidate_id).await.unwrap();
+    if let Ok(msg_arc) = message {
+        if let Message::VoteRequest { term, candidate_id } = *msg_arc {
+            node_2.handle_request_vote(term, candidate_id).await.unwrap();
 
-        // check that the vote response is a rejection
-        let response_message = node_1.receive_message().await;
-        if let Ok(Message::VoteResponse { term, vote_granted, from_id }) = response_message {
-            assert_eq!(term, NODE_1_TERM);
-            assert!(vote_granted);
-            assert_eq!(from_id, NODE_ID_2);
+            // check that the vote response is a rejection
+            let response_message = node_1.receive_message().await;
+            if let Ok(msg_arc) = response_message {
+                if let Message::VoteResponse { term, vote_granted, from_id } = *msg_arc {
+                    assert_eq!(term, NODE_1_TERM);
+                    assert!(vote_granted);
+                    assert_eq!(from_id, NODE_ID_2);
+                } else {
+                    panic!("Expected a VoteResponse message");
+                }
+            } else {
+                panic!("Expected a VoteResponse message");
+            }
         } else {
-            panic!("Expected a VoteResponse message");
+            panic!("Expected a VoteRequest message");
         }
-    } else {
-        panic!("Expected a VoteRequest message");
     }
 }
 
@@ -365,20 +399,26 @@ async fn test_node_handle_request_vote_accepts_equal_term() {
     let message = node_2.receive_message().await;
 
     // handle vote request from node 1
-    if let Ok(Message::VoteRequest { term, candidate_id }) = message {
-        node_2.handle_request_vote(term, candidate_id).await.unwrap();
+    if let Ok(msg_arc) = message {
+        if let Message::VoteRequest { term, candidate_id } = *msg_arc {
+            node_2.handle_request_vote(term, candidate_id).await.unwrap();
 
-        // check that the vote response is a rejection
-        let response_message = node_1.receive_message().await;
-        if let Ok(Message::VoteResponse { term, vote_granted, from_id }) = response_message {
-            assert_eq!(term, NODE_1_TERM);
-            assert!(vote_granted);
-            assert_eq!(from_id, NODE_ID_2);
+            // check that the vote response is a rejection
+            let response_message = node_1.receive_message().await;
+            if let Ok(msg_arc) = response_message {
+                if let Message::VoteResponse { term, vote_granted, from_id } = *msg_arc {
+                    assert_eq!(term, NODE_1_TERM);
+                    assert!(vote_granted);
+                    assert_eq!(from_id, NODE_ID_2);
+                } else {
+                    panic!("Expected a VoteResponse message");
+                }
+            } else {
+                panic!("Expected a VoteResponse message");
+            }
         } else {
-            panic!("Expected a VoteResponse message");
+            panic!("Expected a VoteRequest message");
         }
-    } else {
-        panic!("Expected a VoteRequest message");
     }
 }
 
@@ -410,20 +450,26 @@ async fn test_node_handle_request_vote_rejects_if_already_voted() {
     let message = node_2.receive_message().await;
 
     // handle vote request from node 1
-    if let Ok(Message::VoteRequest { term, candidate_id }) = message {
-        node_2.handle_request_vote(term, candidate_id).await.unwrap();
+    if let Ok(msg_arc) = message {
+        if let Message::VoteRequest { term, candidate_id } = *msg_arc {
+            node_2.handle_request_vote(term, candidate_id).await.unwrap();
 
-        // check that the vote response is a rejection
-        let response_message = node_1.receive_message().await;
-        if let Ok(Message::VoteResponse { term, vote_granted, from_id }) = response_message {
-            assert_eq!(term, NODE_1_TERM);
-            assert!(!vote_granted);
-            assert_eq!(from_id, NODE_ID_2);
+            // check that the vote response is a rejection
+            let response_message = node_1.receive_message().await;
+            if let Ok(msg_arc) = response_message {
+                if let Message::VoteResponse { term, vote_granted, from_id } = *msg_arc {
+                    assert_eq!(term, NODE_1_TERM);
+                    assert!(!vote_granted);
+                    assert_eq!(from_id, NODE_ID_2);
+                } else {
+                    panic!("Expected a VoteResponse message");
+                }
+            } else {
+                panic!("Expected a VoteResponse message");
+            }
         } else {
-            panic!("Expected a VoteResponse message");
+            panic!("Expected a VoteRequest message");
         }
-    } else {
-        panic!("Expected a VoteRequest message");
     }
 }
 
@@ -453,20 +499,26 @@ async fn test_node_handle_request_vote_accepts_if_not_voted() {
     let message = node_2.receive_message().await;
 
     // handle vote request from node 1
-    if let Ok(Message::VoteRequest { term, candidate_id }) = message {
-        node_2.handle_request_vote(term, candidate_id).await.unwrap();
+    if let Ok(msg_arc) = message {
+        if let Message::VoteRequest { term, candidate_id } = *msg_arc {
+            node_2.handle_request_vote(term, candidate_id).await.unwrap();
 
-        // check that the vote response is a rejection
-        let response_message = node_1.receive_message().await;
-        if let Ok(Message::VoteResponse { term, vote_granted, from_id }) = response_message {
-            assert_eq!(term, NODE_1_TERM);
-            assert!(vote_granted);
-            assert_eq!(from_id, NODE_ID_2);
+            // check that the vote response is a rejection
+            let response_message = node_1.receive_message().await;
+            if let Ok(msg_arc) = response_message {
+                if let Message::VoteResponse { term, vote_granted, from_id } = *msg_arc {
+                    assert_eq!(term, NODE_1_TERM);
+                    assert!(vote_granted);
+                    assert_eq!(from_id, NODE_ID_2);
+                } else {
+                    panic!("Expected a VoteResponse message");
+                }
+            } else {
+                panic!("Expected a VoteResponse message");
+            }
         } else {
-            panic!("Expected a VoteResponse message");
+            panic!("Expected a VoteRequest message");
         }
-    } else {
-        panic!("Expected a VoteRequest message");
     }
 }
 
@@ -494,22 +546,27 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
     let request_message = node_2.receive_message().await;
 
     // handle append entries
-    if let Ok(Message::AppendEntries { term, leader_id, new_entries, commit_index }) =
-        request_message
-    {
-        node_2.handle_append_entries(term, leader_id, &new_entries, commit_index).await.unwrap();
+    if let Ok(msg_arc) = request_message {
+        if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg_arc
+        {
+            node_2.handle_append_entries(term, leader_id, new_entries, commit_index).await.unwrap();
 
-        // check that the append response is a rejection
-        let response_message = node_1.receive_message().await;
-        if let Ok(Message::AppendResponse { term, success, from_id }) = response_message {
-            assert_eq!(term, NODE_2_TERM);
-            assert!(!success);
-            assert_eq!(from_id, NODE_ID_2);
+            // check that the append response is a rejection
+            let response_message = node_1.receive_message().await;
+            if let Ok(msg_arc) = response_message {
+                if let Message::AppendResponse { term, success, from_id } = *msg_arc {
+                    assert_eq!(term, NODE_2_TERM);
+                    assert!(!success);
+                    assert_eq!(from_id, NODE_ID_2);
+                } else {
+                    panic!("Expected an AppendResponse message");
+                }
+            } else {
+                panic!("Expected an AppendResponse message");
+            }
         } else {
-            panic!("Expected an AppendResponse message");
+            panic!("Expected an AppendEntries message");
         }
-    } else {
-        panic!("Expected an AppendEntries message");
     }
 }
 
@@ -537,22 +594,27 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
     let request_message = node_2.receive_message().await;
 
     // handle append entries
-    if let Ok(Message::AppendEntries { term, leader_id, new_entries, commit_index }) =
-        request_message
-    {
-        node_2.handle_append_entries(term, leader_id, &new_entries, commit_index).await.unwrap();
+    if let Ok(msg_arc) = request_message {
+        if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg_arc
+        {
+            node_2.handle_append_entries(term, leader_id, new_entries, commit_index).await.unwrap();
 
-        // check that the append response is a rejection
-        let response_message = node_1.receive_message().await;
-        if let Ok(Message::AppendResponse { term, success, from_id }) = response_message {
-            assert_eq!(term, NODE_1_TERM);
-            assert!(success);
-            assert_eq!(from_id, NODE_ID_2);
+            // check that the append response is a rejection
+            let response_message = node_1.receive_message().await;
+            if let Ok(msg_arc) = response_message {
+                if let Message::AppendResponse { term, success, from_id } = *msg_arc {
+                    assert_eq!(term, NODE_1_TERM);
+                    assert!(success);
+                    assert_eq!(from_id, NODE_ID_2);
+                } else {
+                    panic!("Expected an AppendResponse message");
+                }
+            } else {
+                panic!("Expected an AppendResponse message");
+            }
         } else {
-            panic!("Expected an AppendResponse message");
+            panic!("Expected an AppendEntries message");
         }
-    } else {
-        panic!("Expected an AppendEntries message");
     }
 }
 
@@ -579,22 +641,27 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
     let request_message = node_2.receive_message().await;
 
     // handle append entries
-    if let Ok(Message::AppendEntries { term, leader_id, new_entries, commit_index }) =
-        request_message
-    {
-        node_2.handle_append_entries(term, leader_id, &new_entries, commit_index).await.unwrap();
+    if let Ok(msg_arc) = request_message {
+        if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg_arc
+        {
+            node_2.handle_append_entries(term, leader_id, new_entries, commit_index).await.unwrap();
 
-        // check that the append response is a rejection
-        let response_message = node_1.receive_message().await;
-        if let Ok(Message::AppendResponse { term, success, from_id }) = response_message {
-            assert_eq!(term, NODE_TERM);
-            assert!(success);
-            assert_eq!(from_id, NODE_ID_2);
+            // check that the append response is a rejection
+            let response_message = node_1.receive_message().await;
+            if let Ok(msg_arc) = response_message {
+                if let Message::AppendResponse { term, success, from_id } = *msg_arc {
+                    assert_eq!(term, NODE_TERM);
+                    assert!(success);
+                    assert_eq!(from_id, NODE_ID_2);
+                } else {
+                    panic!("Expected an AppendResponse message");
+                }
+            } else {
+                panic!("Expected an AppendResponse message");
+            }
         } else {
-            panic!("Expected an AppendResponse message");
+            panic!("Expected an AppendEntries message");
         }
-    } else {
-        panic!("Expected an AppendEntries message");
     }
 }
 
@@ -664,13 +731,18 @@ async fn test_node_append_to_log_and_broadcast_sends_append_entries_to_all_nodes
     // check that node 2 received the append entries
     let message = node_2.receive_message().await;
 
-    if let Ok(Message::AppendEntries { term, leader_id, new_entries, commit_index }) = message {
-        assert_eq!(term, TERM);
-        assert_eq!(leader_id, NODE_ID);
-        assert_eq!(new_entries.len(), node_1.log().len());
-        assert_eq!(new_entries[0].term, TERM);
-        assert_eq!(new_entries[0].command, COMMAND);
-        assert_eq!(commit_index, 1);
+    if let Ok(msg_arc) = message {
+        if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg_arc
+        {
+            assert_eq!(term, TERM);
+            assert_eq!(leader_id, NODE_ID);
+            assert_eq!(new_entries.len(), node_1.log().len());
+            assert_eq!(new_entries[0].term, TERM);
+            assert_eq!(new_entries[0].command, COMMAND);
+            assert_eq!(commit_index, 1);
+        } else {
+            panic!("Expected an AppendEntries message");
+        }
     } else {
         panic!("Expected an AppendEntries message");
     }
