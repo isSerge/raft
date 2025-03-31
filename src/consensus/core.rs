@@ -156,11 +156,8 @@ impl NodeCore {
 
     /// Transition to a candidate and vote for self.
     pub fn transition_to_candidate(&mut self) {
-        if self.state() != NodeState::Follower {
-            warn!(
-                "Node {} attempted to transition to candidate state but is not a follower",
-                self.id
-            );
+        if self.state() == NodeState::Leader {
+            warn!("Node {} attempted to transition to candidate state but is a Leader", self.id);
             return;
         }
 
