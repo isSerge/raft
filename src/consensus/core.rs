@@ -125,9 +125,15 @@ impl NodeCore {
         }
     }
 
-    /// Set the voted for node.
-    pub fn set_voted_for(&mut self, voted_for: Option<u64>) {
-        self.voted_for = voted_for;
+    /// Record a vote for a candidate if not already voted for someone else.
+    pub fn set_voted_for(&mut self, candidate_id: u64) -> bool {
+        match self.voted_for() {
+            Some(voted_for) => voted_for == candidate_id,
+            None => {
+                self.voted_for = Some(candidate_id);
+                true
+            }
+        }
     }
 
     /// Increment the votes received.
@@ -300,5 +306,37 @@ impl NodeCore {
     // TODO: Implement this.
     pub fn check_log_consistency(&self) -> bool {
         true
+    }
+
+    // Voting methods
+    /// Decide whether to vote for a candidate.
+    fn decide_vote(&mut self, candidate_id: u64, candidate_term: u64) -> bool {
+        // 1. If candidate_term is older than current_term, reject
+        if candidate_term < self.current_term() {
+            return false;
+        }
+        // 2. If candidate_term is greater than current_term, convert to follower and
+        //    reset voted_for
+        if candidate_term > self.current_term() {
+            self.transition_to_follower(candidate_term);
+        }
+
+        // TODO: check candidate log is consistent
+
+        // 3. Vote if we haven't voted yet.
+        let voted_granted = self.set_voted_for(candidate_id);
+        if voted_granted {
+            info!(
+                "Node {} voted for candidate {} in term {}",
+                self.id, candidate_id, candidate_term
+            );
+        } else {
+            debug!(
+                "Node {} did not vote for candidate {} in term {}",
+                self.id, candidate_id, candidate_term
+            );
+        }
+
+        voted_granted
     }
 }
