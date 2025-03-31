@@ -138,11 +138,6 @@ impl NodeCore {
             false
         }
     }
-
-    /// Append log entries to the node's log.
-    pub fn append_log_entries(&mut self, new_entries: Vec<LogEntry>) {
-        self.log.extend_from_slice(&new_entries);
-    }
 }
 
 // State transitions
@@ -293,11 +288,43 @@ impl NodeCore {
         true
     }
 
+    // Handles appending entries received from a leader
+    // Returns `(log_consistent_and_appended, log_was_modified)` flags.
+    pub fn follower_append_entries(&mut self, entries: &[LogEntry]) -> (bool, bool) {
+        // 1. Perform Log Consistency Check
+        // TODO: Implement real check
+        if !self.check_log_consistency() {
+            warn!("Log consistency check failed (TBD).");
+            return (false, false); // Return false for consistency check failure
+        }
+
+        // 2. Handle potential conflicts and append new entries
+        // TODO: Implement conflict detection and log truncation
+        let log_modified = self.find_conflicts_and_append(entries);
+
+        // Return true for consistency (as check passed), and whether log was modified
+        (true, log_modified)
+    }
+
+    /// Finds conflicting entries, appends new entries.
+    /// Returns true if the log was modified.
+    fn find_conflicts_and_append(&mut self, entries: &[LogEntry]) -> bool {
+        if entries.is_empty() {
+            debug!("Node {} received heartbeat (no entries to append/check)", self.id());
+            return false;
+        }
+
+        // TODO: Implement real conflict detection
+        info!("Node {} appending {} entries (simplistic)", self.id(), entries.len());
+        self.log.extend_from_slice(entries);
+        true
+    }
+
     // Voting methods
     /// Decides whether to grant vote based on RequestVote RPC args.
     /// Updates term and voted_for state internally if appropriate.
     /// Returns `(should_grant_vote, term_to_respond_with)`
-    fn decide_vote(&mut self, candidate_id: u64, candidate_term: u64) -> (bool, u64) {
+    pub fn decide_vote(&mut self, candidate_id: u64, candidate_term: u64) -> (bool, u64) {
         // 1. If candidate_term is older than current_term, reject
         if candidate_term < self.current_term() {
             return (false, self.current_term());
@@ -311,7 +338,7 @@ impl NodeCore {
         // TODO: check candidate log is consistent
 
         // 3. Vote if we haven't voted yet.
-        let voted_granted = self.grant_vote(candidate_id);
+        let voted_granted = self.grant_vote_if_possible(candidate_id);
         if voted_granted {
             info!(
                 "Node {} voted for candidate {} in term {}",
@@ -331,7 +358,7 @@ impl NodeCore {
 
     /// Record a vote for a candidate if not already voted for someone else.
     /// Returns true if the vote was granted, false otherwise.
-    pub fn grant_vote(&mut self, candidate_id: u64) -> bool {
+    pub fn grant_vote_if_possible(&mut self, candidate_id: u64) -> bool {
         match self.voted_for() {
             Some(voted_for) => voted_for == candidate_id,
             None => {
