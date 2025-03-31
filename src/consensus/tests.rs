@@ -126,14 +126,15 @@ async fn test_node_broadcast_vote_request_fails_if_not_candidate() {
 #[tokio::test]
 async fn test_node_broadcast_append_entries_sends_message_to_all_nodes() {
     const NODE_ID: u64 = 0;
-    const TERM: u64 = 0;
+    const TERM: u64 = 1;
     let mut nodes = create_network(2).await;
 
     // get the nodes
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
-    node_1.core.transition_to_leader(); // does not change term, still 0
+    node_1.core.transition_to_candidate(); // sets term to 1
+    node_1.core.transition_to_leader(); // does not change term, still 1
 
     // broadcast append entries
     let log_entry = LogEntry::new(TERM, "test".to_string());
@@ -190,7 +191,7 @@ async fn test_node_broadcast_vote_request_sends_message_to_all_nodes() {
 
 #[tokio::test]
 async fn test_node_send_append_response() {
-    const TERM: u64 = 0;
+    const TERM: u64 = 1;
     const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
@@ -198,7 +199,8 @@ async fn test_node_send_append_response() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
-    node_1.core.transition_to_leader(); // does not change term, still 0
+    node_1.core.transition_to_candidate(); // sets term to 1
+    node_1.core.transition_to_leader(); // does not change term, still 1
 
     // broadcast append entries
     let log_entry = LogEntry::new(TERM, "test".to_string());
@@ -516,7 +518,7 @@ async fn test_node_handle_request_vote_accepts_if_not_voted() {
 
 #[tokio::test]
 async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
-    const NODE_1_TERM: u64 = 10;
+    const NODE_1_TERM: u64 = 1;
     const NODE_2_TERM: u64 = NODE_1_TERM + 1; // higher term
     const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
@@ -525,7 +527,8 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
-    node_1.core.transition_to_leader();
+    node_1.core.transition_to_candidate(); // sets term to 1
+    node_1.core.transition_to_leader(); // does not change term, still 1
 
     // set lower term on node 2
     node_2.core.transition_to_follower(NODE_2_TERM);
@@ -615,7 +618,7 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
 
 #[tokio::test]
 async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
-    const NODE_TERM: u64 = 0; // same term for both nodes
+    const NODE_TERM: u64 = 1; // same term for both nodes
     const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
@@ -623,7 +626,8 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
-    node_1.core.transition_to_leader(); // does not change term, still 0
+    node_1.core.transition_to_candidate(); // sets term to 1
+    node_1.core.transition_to_leader(); // does not change term, still 1
 
     // set lower term on node 2
     node_2.core.transition_to_follower(NODE_TERM);
