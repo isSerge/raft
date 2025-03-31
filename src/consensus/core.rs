@@ -335,33 +335,32 @@ impl NodeCore {
         // TODO: check candidate log is consistent
 
         // 3. Vote if we haven't voted yet.
-        let voted_granted = self.grant_vote_if_possible(candidate_id);
-        if voted_granted {
+        let (vote_granted, term_to_respond_with) = self.grant_vote_if_possible(candidate_id);
+        if vote_granted {
             info!(
                 "Node {} voted for candidate {} in term {}",
                 self.id, candidate_id, candidate_term
             );
-
-            (true, self.current_term())
+            (true, term_to_respond_with)
         } else {
             debug!(
                 "Node {} did not vote for candidate {} in term {}",
                 self.id, candidate_id, candidate_term
             );
 
-            (false, self.current_term())
+            (false, term_to_respond_with)
         }
     }
 
     /// Record a vote for a candidate if not already voted for someone else.
-    /// Returns true if the vote was granted, false otherwise.
-    pub fn grant_vote_if_possible(&mut self, candidate_id: u64) -> bool {
+    /// Returns `(vote_granted, term_to_respond_with)`
+    pub fn grant_vote_if_possible(&mut self, candidate_id: u64) -> (bool, u64) {
         match self.voted_for() {
-            Some(voted_for) => voted_for == candidate_id,
+            Some(voted_for) => (voted_for == candidate_id, self.current_term()),
             None => {
                 info!("Node {} voting for candidate {}", self.id, candidate_id);
                 self.voted_for = Some(candidate_id);
-                true
+                (true, self.current_term())
             }
         }
     }

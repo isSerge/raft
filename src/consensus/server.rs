@@ -185,7 +185,7 @@ impl NodeServer {
             candidate_term
         );
 
-        let (vote_granted, term_to_respond) = self.core.decide_vote(candidate_term, candidate_id);
+        let (vote_granted, term_to_respond) = self.core.decide_vote(candidate_id, candidate_term);
         println!(
             "Node {} decided to {} vote for Node {} in term {}",
             self.id(),
