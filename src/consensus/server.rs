@@ -33,7 +33,7 @@ impl NodeServer {
 impl NodeServer {
     /// Get the node's ID.
     pub fn id(&self) -> u64 {
-        self.id()
+        self.core.id()
     }
 
     /// Get the node's current state.
