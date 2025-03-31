@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, collections::HashMap};
 
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 
 use crate::consensus::LogEntry;
 
@@ -41,6 +41,13 @@ pub struct NodeCore {
     // Leader only
     /// The next index of the node for each node.
     next_index: HashMap<u64, u64>,
+}
+
+// Constructors
+impl NodeCore {
+    pub fn new(id: u64) -> Self {
+        Self { id, ..Default::default() }
+    }
 }
 
 // Getters
@@ -97,16 +104,19 @@ impl NodeCore {
 // Setters
 impl NodeCore {
     /// Set the last applied index.
-    pub fn set_last_applied(&mut self, last_applied: u64) {
-        match last_applied.cmp(&self.last_applied) {
+    pub fn set_last_applied(&mut self, index: u64) {
+        // Ensure last_applied is not greater than commit_index
+        let applied_index = index.min(self.commit_index());
+
+        match applied_index.cmp(&self.last_applied) {
             Ordering::Greater => {
-                self.last_applied = last_applied;
+                self.last_applied = applied_index;
                 debug!("Node {} updated last_applied to {}", self.id, self.last_applied);
             }
             Ordering::Less => {
-                warn!(
+                error!(
                     "Node {} attempted to set last_applied to {} (lower than current {})",
-                    self.id, last_applied, self.last_applied
+                    self.id, applied_index, self.last_applied
                 );
             }
             Ordering::Equal => {
@@ -124,36 +134,70 @@ impl NodeCore {
     pub fn increment_votes_received(&mut self) {
         self.votes_received += 1;
     }
+
+    /// Update the term of the node and reset the vote if new_term is greater
+    /// than current_term. Returns true if the term was updated, false
+    /// otherwise.
+    pub fn update_term(&mut self, new_term: u64) -> bool {
+        if new_term > self.current_term() {
+            info!("Node {} updated term from {} to {}", self.id, self.current_term, new_term);
+            self.current_term = new_term;
+            self.voted_for = None;
+            true
+        } else {
+            false
+        }
+    }
 }
 
+// State transitions
 impl NodeCore {
-    pub fn new(id: u64) -> Self {
-        Self { id, ..Default::default() }
-    }
-
-    /// Transition to a follower state.
+    /// Transition to a follower and reset votes.
     pub fn transition_to_follower(&mut self, term: u64) {
-        if term > self.current_term() {
-            self.current_term = term;
-            self.voted_for = None;
+        let term_updated = self.update_term(term);
+
+        if term_updated && self.state() != NodeState::Follower {
+            info!("Node {} transitioning to follower state at term {}", self.id, term);
+            self.state = NodeState::Follower;
+            self.votes_received = 0; // reset votes
         }
-        self.state = NodeState::Follower;
-        self.votes_received = 0;
     }
 
-    /// Transition to a candidate state.
-    pub fn transition_to_candidate(&mut self, term: u64) {
-        self.current_term = term.max(self.current_term());
+    /// Transition to a candidate and vote for self.
+    pub fn transition_to_candidate(&mut self) {
+        if self.state() != NodeState::Follower {
+            warn!(
+                "Node {} attempted to transition to candidate state but is not a follower",
+                self.id
+            );
+            return;
+        }
+
+        let new_term = self.current_term() + 1;
+        info!("Node {} transitioning to candidate state at term {}", self.id, new_term);
+
+        let term_updated = self.update_term(new_term);
+        assert!(term_updated, "Term should increase");
         self.state = NodeState::Candidate;
         self.voted_for = Some(self.id);
         self.votes_received = 1; // add self vote
     }
 
-    /// Transition to a leader state.
-    pub fn transition_to_leader(&mut self, term: u64) {
-        self.current_term = term.max(self.current_term());
+    /// Transition to a leader.
+    pub fn transition_to_leader(&mut self) {
+        if self.state() != NodeState::Candidate {
+            warn!(
+                "Node {} attempted to transition to leader state but is not a candidate",
+                self.id
+            );
+            return;
+        }
+
+        info!("Node {} transitioning to leader state at term {}", self.id, self.current_term());
         self.state = NodeState::Leader;
-        self.voted_for = Some(self.id);
+        self.votes_received = 0; // reset votes
+
+        // TODO: initialize Leader only state
     }
 
     /// Append log entries to the node's log.

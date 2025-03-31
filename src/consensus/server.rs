@@ -145,7 +145,7 @@ impl NodeServer {
     pub async fn start_election(&mut self) -> Result<(), ConsensusError> {
         let new_term = self.core.current_term() + 1;
         info!("Node {} starting election for term {}", self.id, new_term);
-        self.core.transition_to_candidate(new_term);
+        self.core.transition_to_candidate();
         self.broadcast_vote_request().await
     }
 
@@ -325,7 +325,7 @@ impl NodeServer {
                 total_nodes,
                 self.core.current_term()
             );
-            self.core.transition_to_leader(self.core.current_term());
+            self.core.transition_to_leader();
 
             // Send an empty AppendEntries to all other nodes to establish leadership.
             self.broadcast_append_entries(vec![]).await?;

@@ -52,7 +52,7 @@ async fn test_node_transition_to_candidate_and_vote_for_self() {
     assert_eq!(node.current_term(), 0);
     assert_eq!(node.voted_for(), None);
 
-    node.core.transition_to_candidate(TERM);
+    node.core.transition_to_candidate();
 
     assert_eq!(node.state(), NodeState::Candidate);
     assert_eq!(node.current_term(), TERM);
@@ -61,7 +61,6 @@ async fn test_node_transition_to_candidate_and_vote_for_self() {
 
 #[tokio::test]
 async fn test_node_transition_to_follower_and_reset_voted_for() {
-    const TERM: u64 = 2;
     const NODE_ID: u64 = 0;
     let mut nodes = create_network(1).await;
     let node = &mut nodes[NODE_ID as usize];
@@ -71,14 +70,14 @@ async fn test_node_transition_to_follower_and_reset_voted_for() {
     assert_eq!(node.current_term(), 0);
     assert_eq!(node.voted_for(), None);
 
-    node.core.transition_to_candidate(TERM);
+    node.core.transition_to_candidate(); // sets term to 1, votes for self
 
     // check values after transition
     assert_eq!(node.state(), NodeState::Candidate);
-    assert_eq!(node.current_term(), TERM);
+    assert_eq!(node.current_term(), 1);
     assert_eq!(node.voted_for(), Some(NODE_ID));
 
-    const NEW_TERM: u64 = TERM + 1; // Increment the term to trigger a transition to follower
+    const NEW_TERM: u64 = 2; // Increment the term to trigger a transition to follower
 
     node.core.transition_to_follower(NEW_TERM);
 
@@ -90,18 +89,22 @@ async fn test_node_transition_to_follower_and_reset_voted_for() {
 #[tokio::test]
 async fn test_node_transition_to_leader() {
     const NODE_ID: u64 = 0;
-    const TERM: u64 = 1;
     let mut nodes = create_network(1).await;
     let node = &mut nodes[NODE_ID as usize];
 
+    // start as follower
     assert_eq!(node.state(), NodeState::Follower);
     assert_eq!(node.current_term(), 0);
     assert_eq!(node.voted_for(), None);
 
-    node.core.transition_to_leader(TERM);
+    // transition to candidate
+    node.core.transition_to_candidate(); // sets term to 1, votes for self
+
+    // transition to leader
+    node.core.transition_to_leader();
 
     assert_eq!(node.state(), NodeState::Leader);
-    assert_eq!(node.current_term(), TERM);
+    assert_eq!(node.current_term(), 1); // term should increase
     assert_eq!(node.voted_for(), Some(NODE_ID));
 }
 
@@ -121,14 +124,14 @@ async fn test_node_broadcast_vote_request_fails_if_not_candidate() {
 #[tokio::test]
 async fn test_node_broadcast_append_entries_sends_message_to_all_nodes() {
     const NODE_ID: u64 = 0;
-    const TERM: u64 = 1;
+    const TERM: u64 = 0;
     let mut nodes = create_network(2).await;
 
     // get the nodes
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
-    node_1.core.transition_to_leader(TERM);
+    node_1.core.transition_to_leader(); // does not change term, still 0
 
     // broadcast append entries
     let log_entry = LogEntry::new(TERM, "test".to_string());
@@ -161,7 +164,7 @@ async fn test_node_broadcast_vote_request_sends_message_to_all_nodes() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
-    node_1.core.transition_to_candidate(TERM);
+    node_1.core.transition_to_candidate();
 
     // broadcast vote request
     let result = node_1.broadcast_vote_request().await;
@@ -185,7 +188,7 @@ async fn test_node_broadcast_vote_request_sends_message_to_all_nodes() {
 
 #[tokio::test]
 async fn test_node_send_append_response() {
-    const TERM: u64 = 1;
+    const TERM: u64 = 0;
     const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
@@ -193,7 +196,7 @@ async fn test_node_send_append_response() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
-    node_1.core.transition_to_leader(TERM);
+    node_1.core.transition_to_leader(); // does not change term, still 0
 
     // broadcast append entries
     let log_entry = LogEntry::new(TERM, "test".to_string());
@@ -232,7 +235,6 @@ async fn test_node_send_append_response() {
 
 #[tokio::test]
 async fn test_node_send_vote_response() {
-    const TERM: u64 = 21;
     const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
@@ -240,7 +242,7 @@ async fn test_node_send_vote_response() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
-    node_1.core.transition_to_candidate(TERM);
+    node_1.core.transition_to_candidate(); // sets term to 1
 
     // broadcast vote request
     let result = node_1.broadcast_vote_request().await;
@@ -265,7 +267,7 @@ async fn test_node_send_vote_response() {
 
     if let Ok(msg_arc) = response_message {
         if let Message::VoteResponse { term, vote_granted, from_id } = *msg_arc {
-            assert_eq!(term, TERM);
+            assert_eq!(term, 1);
             assert!(vote_granted);
             assert_eq!(from_id, NODE_ID_2);
         } else {
@@ -287,7 +289,7 @@ async fn test_node_handle_request_vote_rejects_older_term() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
-    node_1.core.transition_to_candidate(NODE_1_TERM);
+    node_1.core.transition_to_candidate();
 
     // set higher term on node 2
     node_2.core.transition_to_follower(NODE_2_TERM);
@@ -325,8 +327,6 @@ async fn test_node_handle_request_vote_rejects_older_term() {
 
 #[tokio::test]
 async fn test_node_handle_request_vote_accepts_newer_term() {
-    const NODE_1_TERM: u64 = 10;
-    const NODE_2_TERM: u64 = NODE_1_TERM - 1;
     const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
@@ -334,10 +334,10 @@ async fn test_node_handle_request_vote_accepts_newer_term() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
-    node_1.core.transition_to_candidate(NODE_1_TERM);
+    node_1.core.transition_to_candidate(); // sets term to 1
 
     // set lower term on node 2
-    node_2.core.transition_to_follower(NODE_2_TERM);
+    node_2.core.transition_to_follower(0);
 
     // node 1 broadcasts vote request
     let result = node_1.broadcast_vote_request().await;
@@ -355,7 +355,7 @@ async fn test_node_handle_request_vote_accepts_newer_term() {
             let response_message = node_1.receive_message().await;
             if let Ok(msg_arc) = response_message {
                 if let Message::VoteResponse { term, vote_granted, from_id } = *msg_arc {
-                    assert_eq!(term, NODE_1_TERM);
+                    assert_eq!(term, 1);
                     assert!(vote_granted);
                     assert_eq!(from_id, NODE_ID_2);
                 } else {
@@ -372,8 +372,6 @@ async fn test_node_handle_request_vote_accepts_newer_term() {
 
 #[tokio::test]
 async fn test_node_handle_request_vote_accepts_equal_term() {
-    const NODE_1_TERM: u64 = 10;
-    const NODE_2_TERM: u64 = NODE_1_TERM;
     const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
@@ -381,10 +379,10 @@ async fn test_node_handle_request_vote_accepts_equal_term() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
-    node_1.core.transition_to_candidate(NODE_1_TERM);
+    node_1.core.transition_to_candidate(); // sets term to 1
 
     // set lower term on node 2
-    node_2.core.transition_to_follower(NODE_2_TERM);
+    node_2.core.transition_to_follower(1);
 
     // node 1 broadcasts vote request
     let result = node_1.broadcast_vote_request().await;
@@ -402,7 +400,7 @@ async fn test_node_handle_request_vote_accepts_equal_term() {
             let response_message = node_1.receive_message().await;
             if let Ok(msg_arc) = response_message {
                 if let Message::VoteResponse { term, vote_granted, from_id } = *msg_arc {
-                    assert_eq!(term, NODE_1_TERM);
+                    assert_eq!(term, 1);
                     assert!(vote_granted);
                     assert_eq!(from_id, NODE_ID_2);
                 } else {
@@ -419,8 +417,6 @@ async fn test_node_handle_request_vote_accepts_equal_term() {
 
 #[tokio::test]
 async fn test_node_handle_request_vote_rejects_if_already_voted() {
-    const NODE_1_TERM: u64 = 10;
-    const NODE_2_TERM: u64 = NODE_1_TERM;
     const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
@@ -428,10 +424,10 @@ async fn test_node_handle_request_vote_rejects_if_already_voted() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
-    node_1.core.transition_to_candidate(NODE_1_TERM);
+    node_1.core.transition_to_candidate(); // sets term to 1, votes for self
 
-    // transition node 2 to follower
-    node_2.core.transition_to_candidate(NODE_2_TERM);
+    // transition node 2 to candidate
+    node_2.core.transition_to_candidate(); // sets term to 1, votes for self
 
     // both should have same term and self as voted_for
     assert_eq!(node_1.voted_for(), Some(node_1.id()));
@@ -453,7 +449,7 @@ async fn test_node_handle_request_vote_rejects_if_already_voted() {
             let response_message = node_1.receive_message().await;
             if let Ok(msg_arc) = response_message {
                 if let Message::VoteResponse { term, vote_granted, from_id } = *msg_arc {
-                    assert_eq!(term, NODE_1_TERM);
+                    assert_eq!(term, 1);
                     assert!(!vote_granted);
                     assert_eq!(from_id, NODE_ID_2);
                 } else {
@@ -470,7 +466,6 @@ async fn test_node_handle_request_vote_rejects_if_already_voted() {
 
 #[tokio::test]
 async fn test_node_handle_request_vote_accepts_if_not_voted() {
-    const NODE_1_TERM: u64 = 10;
     const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
@@ -478,7 +473,7 @@ async fn test_node_handle_request_vote_accepts_if_not_voted() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
-    node_1.core.transition_to_candidate(NODE_1_TERM);
+    node_1.core.transition_to_candidate(); // sets term to 1
 
     // node 1 should have self as voted_for
     assert_eq!(node_1.voted_for(), Some(node_1.id()));
@@ -502,7 +497,7 @@ async fn test_node_handle_request_vote_accepts_if_not_voted() {
             let response_message = node_1.receive_message().await;
             if let Ok(msg_arc) = response_message {
                 if let Message::VoteResponse { term, vote_granted, from_id } = *msg_arc {
-                    assert_eq!(term, NODE_1_TERM);
+                    assert_eq!(term, 1);
                     assert!(vote_granted);
                     assert_eq!(from_id, NODE_ID_2);
                 } else {
@@ -528,7 +523,7 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
-    node_1.core.transition_to_leader(NODE_1_TERM);
+    node_1.core.transition_to_leader();
 
     // set lower term on node 2
     node_2.core.transition_to_follower(NODE_2_TERM);
@@ -565,24 +560,27 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
     }
 }
 
+// TODO: fix or deletethis test, currently fails because transition_to_leader()
+// is not updating term anymore
 #[tokio::test]
 async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
-    const NODE_1_TERM: u64 = 10; // higher term
-    const NODE_2_TERM: u64 = NODE_1_TERM - 1;
     const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
     // get the nodes
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
+    // node 1 starts as follower, transition to candidate
+    node_1.core.transition_to_candidate(); // sets term to 1, votes for self
+
     // transition node 1 to leader
-    node_1.core.transition_to_leader(NODE_1_TERM);
+    node_1.core.transition_to_leader(); // does not change term, still 1
 
     // set lower term on node 2
-    node_2.core.transition_to_follower(NODE_2_TERM);
+    node_2.core.transition_to_follower(0); // sets node 2 term to lower than node 1
 
     // node 1 broadcasts append entries
-    let log_entry = LogEntry::new(NODE_1_TERM, "test".to_string());
+    let log_entry = LogEntry::new(1, "test".to_string());
     node_1.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
 
     // node 2 receives append entries from node 1
@@ -598,7 +596,7 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
             let response_message = node_1.receive_message().await;
             if let Ok(msg_arc) = response_message {
                 if let Message::AppendResponse { term, success, from_id } = *msg_arc {
-                    assert_eq!(term, NODE_1_TERM);
+                    assert_eq!(term, 1);
                     assert!(success);
                     assert_eq!(from_id, NODE_ID_2);
                 } else {
@@ -615,7 +613,7 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
 
 #[tokio::test]
 async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
-    const NODE_TERM: u64 = 10; // same term for both nodes
+    const NODE_TERM: u64 = 0; // same term for both nodes
     const NODE_ID_2: u64 = 1;
     let mut nodes = create_network(2).await;
 
@@ -623,7 +621,7 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
-    node_1.core.transition_to_leader(NODE_TERM);
+    node_1.core.transition_to_leader(); // does not change term, still 0
 
     // set lower term on node 2
     node_2.core.transition_to_follower(NODE_TERM);
@@ -663,15 +661,18 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
 #[tokio::test]
 async fn test_node_start_append_entries_updates_log() {
     const NODE_ID: u64 = 0;
-    const TERM: u64 = 1;
     const COMMAND: &str = "test command";
     let mut nodes = create_network(1).await;
     let node = &mut nodes[NODE_ID as usize];
 
+    // start as follower, transition to candidate
+    node.core.transition_to_candidate(); // sets term to 1, votes for self
+
     // transition to leader
-    node.core.transition_to_leader(TERM);
+    node.core.transition_to_leader(); // does not change term, still 1
 
     // check default values
+    assert_eq!(node.state(), NodeState::Leader);
     assert_eq!(node.log().len(), 0);
     assert_eq!(node.state_machine.get_state(), 0);
 
@@ -680,7 +681,7 @@ async fn test_node_start_append_entries_updates_log() {
 
     // check that the log has the new entry
     assert_eq!(node.log().len(), 1);
-    assert_eq!(node.log()[0].term, TERM);
+    assert_eq!(node.log()[0].term, 1);
     assert_eq!(node.log()[0].command, COMMAND);
 }
 
@@ -705,20 +706,22 @@ async fn test_node_start_append_entries_rejects_if_not_leader() {
 #[tokio::test]
 async fn test_node_start_append_entries_sends_append_entries_to_all_nodes() {
     const NODE_ID: u64 = 0;
-    const TERM: u64 = 1;
     const COMMAND: &str = "test command";
     let mut nodes = create_network(2).await;
     let (node_1, node_2) = get_two_nodes(&mut nodes);
 
+    // start as follower, transition to candidate
+    node_1.core.transition_to_candidate(); // sets term to 1, votes for self
+
     // transition node 1 to leader
-    node_1.core.transition_to_leader(TERM);
+    node_1.core.transition_to_leader(); // does not change term, still 1
 
     // append to log and broadcast
     node_1.start_append_entries(COMMAND.to_string()).await.unwrap();
 
     // check that the log has the new entry
     assert_eq!(node_1.log().len(), 1);
-    assert_eq!(node_1.log()[0].term, TERM);
+    assert_eq!(node_1.log()[0].term, 1);
     assert_eq!(node_1.log()[0].command, COMMAND);
     assert_eq!(node_1.commit_index(), 0);
 
@@ -728,10 +731,10 @@ async fn test_node_start_append_entries_sends_append_entries_to_all_nodes() {
     if let Ok(msg_arc) = message {
         if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg_arc
         {
-            assert_eq!(term, TERM);
+            assert_eq!(term, 1);
             assert_eq!(leader_id, NODE_ID);
             assert_eq!(new_entries.len(), node_1.log().len());
-            assert_eq!(new_entries[0].term, TERM);
+            assert_eq!(new_entries[0].term, 1);
             assert_eq!(new_entries[0].command, COMMAND);
             assert_eq!(commit_index, 0); // should not change, updated after majority of responses
         } else {
