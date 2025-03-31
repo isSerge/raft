@@ -99,6 +99,14 @@ impl NodeCore {
     pub fn log_last_term(&self) -> u64 {
         self.log.last().map_or(0, |entry| entry.term)
     }
+
+    /// Check if the node has received majority of votes.
+    pub fn has_majority_votes(&self) -> bool {
+        // TODO: get total number of nodes from cluster
+        let total_nodes = 2;
+        let majority_count = total_nodes / 2 + 1;
+        self.votes_received() >= majority_count
+    }
 }
 
 // Setters
@@ -338,5 +346,23 @@ impl NodeCore {
         }
 
         voted_granted
+    }
+
+    /// Record a vote for self during candidate state.
+    fn record_vote_and_check_majority(&mut self) -> bool {
+        if self.state() != NodeState::Candidate {
+            warn!("Node {} attempted to record vote for self but is not a candidate", self.id);
+            return false;
+        }
+
+        self.increment_votes_received();
+        info!(
+            "Node {} received vote from Node {}, total votes: {}",
+            self.id,
+            self.id,
+            self.votes_received()
+        );
+
+        self.has_majority_votes()
     }
 }
