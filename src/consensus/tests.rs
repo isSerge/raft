@@ -57,6 +57,7 @@ async fn test_node_transition_to_candidate_and_vote_for_self() {
     assert_eq!(node.state(), NodeState::Candidate);
     assert_eq!(node.current_term(), TERM);
     assert_eq!(node.voted_for(), Some(NODE_ID));
+    assert_eq!(node.core.votes_received(), 1);
 }
 
 #[tokio::test]
@@ -84,6 +85,7 @@ async fn test_node_transition_to_follower_and_reset_voted_for() {
     assert_eq!(node.state(), NodeState::Follower);
     assert_eq!(node.current_term(), NEW_TERM);
     assert_eq!(node.voted_for(), None);
+    assert_eq!(node.core.votes_received(), 0);
 }
 
 #[tokio::test]
