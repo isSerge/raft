@@ -99,14 +99,6 @@ impl NodeCore {
     pub fn log_last_term(&self) -> u64 {
         self.log.last().map_or(0, |entry| entry.term)
     }
-
-    /// Check if the node has received majority of votes.
-    pub fn has_majority_votes(&self) -> bool {
-        // TODO: get total number of nodes from cluster
-        let total_nodes = 2;
-        let majority_count = total_nodes / 2 + 1;
-        self.votes_received() >= majority_count
-    }
 }
 
 // Setters
@@ -133,22 +125,6 @@ impl NodeCore {
         }
     }
 
-    /// Record a vote for a candidate if not already voted for someone else.
-    pub fn set_voted_for(&mut self, candidate_id: u64) -> bool {
-        match self.voted_for() {
-            Some(voted_for) => voted_for == candidate_id,
-            None => {
-                self.voted_for = Some(candidate_id);
-                true
-            }
-        }
-    }
-
-    /// Increment the votes received.
-    pub fn increment_votes_received(&mut self) {
-        self.votes_received += 1;
-    }
-
     /// Update the term of the node and reset the vote if new_term is greater
     /// than current_term. Returns true if the term was updated, false
     /// otherwise.
@@ -162,6 +138,11 @@ impl NodeCore {
             false
         }
     }
+
+    /// Append log entries to the node's log.
+    pub fn append_log_entries(&mut self, new_entries: Vec<LogEntry>) {
+        self.log.extend_from_slice(&new_entries);
+    }
 }
 
 // State transitions
@@ -169,8 +150,9 @@ impl NodeCore {
     /// Transition to a follower and reset votes.
     pub fn transition_to_follower(&mut self, term: u64) {
         let term_updated = self.update_term(term);
+        let state_changed = self.state() != NodeState::Follower;
 
-        if term_updated && self.state() != NodeState::Follower {
+        if term_updated || state_changed {
             info!("Node {} transitioning to follower state at term {}", self.id, term);
             self.state = NodeState::Follower;
             self.votes_received = 0; // reset votes
@@ -212,11 +194,6 @@ impl NodeCore {
         self.votes_received = 0; // reset votes
 
         // TODO: initialize Leader only state
-    }
-
-    /// Append log entries to the node's log.
-    pub fn append_log_entries(&mut self, new_entries: Vec<LogEntry>) {
-        self.log.extend_from_slice(&new_entries);
     }
 
     /// Update the commit index.
@@ -317,11 +294,13 @@ impl NodeCore {
     }
 
     // Voting methods
-    /// Decide whether to vote for a candidate.
-    fn decide_vote(&mut self, candidate_id: u64, candidate_term: u64) -> bool {
+    /// Decides whether to grant vote based on RequestVote RPC args.
+    /// Updates term and voted_for state internally if appropriate.
+    /// Returns `(should_grant_vote, term_to_respond_with)`
+    fn decide_vote(&mut self, candidate_id: u64, candidate_term: u64) -> (bool, u64) {
         // 1. If candidate_term is older than current_term, reject
         if candidate_term < self.current_term() {
-            return false;
+            return (false, self.current_term());
         }
         // 2. If candidate_term is greater than current_term, convert to follower and
         //    reset voted_for
@@ -332,37 +311,50 @@ impl NodeCore {
         // TODO: check candidate log is consistent
 
         // 3. Vote if we haven't voted yet.
-        let voted_granted = self.set_voted_for(candidate_id);
+        let voted_granted = self.grant_vote(candidate_id);
         if voted_granted {
             info!(
                 "Node {} voted for candidate {} in term {}",
                 self.id, candidate_id, candidate_term
             );
+
+            (true, self.current_term())
         } else {
             debug!(
                 "Node {} did not vote for candidate {} in term {}",
                 self.id, candidate_id, candidate_term
             );
-        }
 
-        voted_granted
+            (false, self.current_term())
+        }
+    }
+
+    /// Record a vote for a candidate if not already voted for someone else.
+    /// Returns true if the vote was granted, false otherwise.
+    pub fn grant_vote(&mut self, candidate_id: u64) -> bool {
+        match self.voted_for() {
+            Some(voted_for) => voted_for == candidate_id,
+            None => {
+                info!("Node {} voting for candidate {}", self.id, candidate_id);
+                self.voted_for = Some(candidate_id);
+                true
+            }
+        }
     }
 
     /// Record a vote for self during candidate state.
-    fn record_vote_and_check_majority(&mut self) -> bool {
+    pub fn record_vote_received(&mut self) {
         if self.state() != NodeState::Candidate {
             warn!("Node {} attempted to record vote for self but is not a candidate", self.id);
-            return false;
         }
 
-        self.increment_votes_received();
+        self.votes_received += 1;
+
         info!(
             "Node {} received vote from Node {}, total votes: {}",
             self.id,
             self.id,
             self.votes_received()
         );
-
-        self.has_majority_votes()
     }
 }

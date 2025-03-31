@@ -172,7 +172,7 @@ impl NodeServer {
         // 3. Vote if we haven't voted yet.
         let can_vote = self.core.voted_for().is_none_or(|voted_for| voted_for == candidate_id);
         if can_vote {
-            self.core.set_voted_for(candidate_id);
+            self.core.grant_vote(candidate_id);
         }
 
         self.send_vote_response(candidate_id, can_vote).await
@@ -298,7 +298,7 @@ impl NodeServer {
         }
 
         if vote_granted {
-            self.core.increment_votes_received();
+            self.core.record_vote_received();
             info!(
                 "Node {} received vote from Node {}, total votes: {}",
                 self.id,
