@@ -56,11 +56,7 @@ async fn main() -> Result<(), ConsensusError> {
         // Spawn a new task to process incoming messages for the node
         tokio::spawn(async move {
             // Get the node id
-            let node_server_id;
-            {
-                let node_locked = node_server_arc.lock().await;
-                node_server_id = node_locked.id();
-            }
+            let node_server_id = { node_server_arc.lock().await.id() };
 
             info!("Start processing messages for node {}", node_server_id);
 
