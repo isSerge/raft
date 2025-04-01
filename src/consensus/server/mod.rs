@@ -108,9 +108,8 @@ impl NodeServer {
         self.messenger.send_to(candidate_id, Arc::new(msg)).await.map_err(ConsensusError::Transport)
     }
 
-    // TODO: make private after tests are updated
     /// Broadcast a vote request to all other nodes.
-    pub async fn broadcast_vote_request(&self) -> Result<(), ConsensusError> {
+    async fn broadcast_vote_request(&self) -> Result<(), ConsensusError> {
         if self.core.state() != NodeState::Candidate {
             warn!("Node {} tried to broadcast vote request but is not Candidate", self.id());
             return Err(ConsensusError::NotCandidate(self.id()));
@@ -122,9 +121,8 @@ impl NodeServer {
         self.broadcast(msg).await
     }
 
-    // TODO: make private after tests are updated
     /// Broadcast an AppendEntries request to all other nodes.
-    pub async fn broadcast_append_entries(
+    async fn broadcast_append_entries(
         &self,
         new_entries: Vec<LogEntry>,
     ) -> Result<(), ConsensusError> {
@@ -161,9 +159,8 @@ impl NodeServer {
         self.broadcast_vote_request().await
     }
 
-    // TODO: make private after tests are updated
     /// Start an AppendEntries
-    pub async fn start_append_entries(&mut self, command: String) -> Result<(), ConsensusError> {
+    async fn start_append_entries(&mut self, command: String) -> Result<(), ConsensusError> {
         // Delegate appending to the core.
         if self.core.leader_append_entry(command) {
             let new_entry =
@@ -180,9 +177,8 @@ impl NodeServer {
         }
     }
 
-    // TODO: make private after tests are updated
     /// Handle a request vote from a candidate
-    pub async fn handle_request_vote(
+    async fn handle_request_vote(
         &mut self,
         candidate_term: u64,
         candidate_id: u64,
@@ -205,9 +201,8 @@ impl NodeServer {
         self.send_vote_response(candidate_id, vote_granted, term_to_respond).await
     }
 
-    // TODO: make private after tests are updated
     /// Handle an AppendEntries request from a leader
-    pub async fn handle_append_entries(
+    async fn handle_append_entries(
         &mut self,
         leader_term: u64,
         leader_id: u64,
