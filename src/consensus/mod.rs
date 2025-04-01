@@ -3,8 +3,6 @@ mod error;
 mod event;
 mod log_entry;
 mod server;
-#[cfg(test)]
-mod tests;
 
 pub use core::*;
 

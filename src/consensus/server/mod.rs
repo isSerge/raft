@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use std::sync::Arc;
 
 use log::{debug, error, info, warn};
