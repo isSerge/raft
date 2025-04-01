@@ -14,8 +14,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct NodeServer {
-    // TODO: make private after tests are updated
-    pub core: NodeCore,
+    core: NodeCore,
     pub state_machine: StateMachine,
     messenger: NodeMessenger,
     receiver: NodeReceiver,
