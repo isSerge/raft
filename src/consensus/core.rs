@@ -370,3 +370,80 @@ impl NodeCore {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_node_transition_to_candidate_and_vote_for_self() {
+        const TERM: u64 = 1;
+        const NODE_ID: u64 = 0;
+
+        let mut core = NodeCore::new(NODE_ID);
+
+        // check default values
+        assert_eq!(core.state(), NodeState::Follower);
+        assert_eq!(core.current_term(), 0);
+        assert_eq!(core.voted_for(), None);
+
+        core.transition_to_candidate();
+
+        assert_eq!(core.state(), NodeState::Candidate);
+        assert_eq!(core.current_term(), TERM);
+        assert_eq!(core.voted_for(), Some(NODE_ID));
+        assert_eq!(core.votes_received(), 1);
+    }
+
+    #[test]
+    fn test_node_transition_to_follower_and_reset_voted_for() {
+        const NODE_ID: u64 = 0;
+        const TERM_0: u64 = 0;
+        const TERM_1: u64 = 1;
+        const TERM_2: u64 = 2;
+
+        let mut core = NodeCore::new(NODE_ID);
+
+        // check default values
+        assert_eq!(core.state(), NodeState::Follower);
+        assert_eq!(core.current_term(), TERM_0);
+        assert_eq!(core.voted_for(), None);
+
+        core.transition_to_candidate(); // sets term to 1, votes for self
+
+        // check values after transition
+        assert_eq!(core.state(), NodeState::Candidate);
+        assert_eq!(core.current_term(), TERM_1);
+        assert_eq!(core.voted_for(), Some(NODE_ID));
+
+        core.transition_to_follower(TERM_2);
+
+        assert_eq!(core.state(), NodeState::Follower);
+        assert_eq!(core.current_term(), TERM_2);
+        assert_eq!(core.voted_for(), None);
+        assert_eq!(core.votes_received(), 0);
+    }
+
+    #[test]
+    fn test_node_transition_to_leader() {
+        const NODE_ID: u64 = 0;
+        const TERM_0: u64 = 0;
+        const TERM_1: u64 = 1;
+
+        let mut core = NodeCore::new(NODE_ID);
+
+        // start as follower
+        assert_eq!(core.state(), NodeState::Follower);
+        assert_eq!(core.current_term(), TERM_0);
+        assert_eq!(core.voted_for(), None);
+
+        // transition to candidate
+        core.transition_to_candidate(); // sets term to 1, votes for self
+
+        // transition to leader
+        core.transition_to_leader();
+
+        assert_eq!(core.state(), NodeState::Leader);
+        assert_eq!(core.current_term(), TERM_1); // term should increase
+        assert_eq!(core.voted_for(), Some(NODE_ID));
+    }
+}
