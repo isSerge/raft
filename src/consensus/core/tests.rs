@@ -228,3 +228,203 @@ fn test_core_follower_update_commit_index_failure() {
 
     assert_eq!(core.commit_index(), ORIGINAL_COMMIT_INDEX);
 }
+
+#[test]
+fn test_core_leader_update_commit_index_success() {
+    let mut core = NodeCore::new(NODE_ID);
+    const FOLLOWER_ID: u64 = 1;
+    const TOTAL_NODES: u64 = 2;
+
+    // Setup: transition to leader and add some log entries
+    core.transition_to_candidate();
+    core.transition_to_leader();
+    core.leader_append_entry("test1".to_string());
+    core.leader_append_entry("test2".to_string());
+
+    // Initial state
+    assert_eq!(core.commit_index(), 0);
+    assert_eq!(core.log_last_index(), 2);
+
+    // Test successful update
+    let result = core.leader_update_commit_index(FOLLOWER_ID, true, TOTAL_NODES);
+    assert_eq!(result, Some((0, 2)));
+    assert_eq!(core.commit_index(), 2);
+}
+
+#[test]
+fn test_core_leader_update_commit_index_no_change() {
+    let mut core = NodeCore::new(NODE_ID);
+    const FOLLOWER_ID: u64 = 1;
+    const TOTAL_NODES: u64 = 2;
+
+    // Setup: transition to leader and add some log entries
+    core.transition_to_candidate();
+    core.transition_to_leader();
+    core.leader_append_entry("test1".to_string());
+    core.leader_append_entry("test2".to_string());
+    core.commit_index = 2; // Set commit index to log length
+
+    // Test update when commit index is already at log length
+    let result = core.leader_update_commit_index(FOLLOWER_ID, true, TOTAL_NODES);
+    assert_eq!(result, None);
+    assert_eq!(core.commit_index(), 2);
+}
+
+#[test]
+fn test_core_leader_update_commit_index_failure() {
+    let mut core = NodeCore::new(NODE_ID);
+    const FOLLOWER_ID: u64 = 1;
+    const TOTAL_NODES: u64 = 2;
+
+    // Setup: transition to leader and add some log entries
+    core.transition_to_candidate();
+    core.transition_to_leader();
+    core.leader_append_entry("test1".to_string());
+    core.leader_append_entry("test2".to_string());
+
+    // Test failed append entries
+    let result = core.leader_update_commit_index(FOLLOWER_ID, false, TOTAL_NODES);
+    assert_eq!(result, None);
+    assert_eq!(core.commit_index(), 0);
+}
+
+#[test]
+fn test_core_leader_update_commit_index_not_leader() {
+    let mut core = NodeCore::new(NODE_ID);
+    const FOLLOWER_ID: u64 = 1;
+    const TOTAL_NODES: u64 = 2;
+
+    // Test when not in leader state
+    let result = core.leader_update_commit_index(FOLLOWER_ID, true, TOTAL_NODES);
+    assert_eq!(result, None);
+    assert_eq!(core.commit_index(), 0);
+}
+
+#[test]
+fn test_core_follower_append_entries() {
+    let mut core = NodeCore::new(NODE_ID);
+    const TERM: u64 = 1;
+
+    // Create test entries
+    let entries =
+        vec![LogEntry::new(TERM, "test1".to_string()), LogEntry::new(TERM, "test2".to_string())];
+
+    // Test appending entries
+    let (consistent, modified) = core.follower_append_entries(&entries);
+    assert!(consistent);
+    assert!(modified);
+    assert_eq!(core.log().len(), 2);
+    assert_eq!(core.log()[0].term, TERM);
+    assert_eq!(core.log()[1].term, TERM);
+}
+
+#[test]
+fn test_core_follower_append_entries_empty() {
+    let mut core = NodeCore::new(NODE_ID);
+
+    // Test appending empty entries (heartbeat)
+    let (consistent, modified) = core.follower_append_entries(&[]);
+    assert!(consistent);
+    assert!(!modified);
+    assert_eq!(core.log().len(), 0);
+}
+
+#[test]
+fn test_core_decide_vote_newer_term() {
+    let mut core = NodeCore::new(NODE_ID);
+    const CANDIDATE_ID: u64 = 1;
+    const CANDIDATE_TERM: u64 = 2;
+
+    // Test voting for candidate with newer term
+    let (granted, term) = core.decide_vote(CANDIDATE_ID, CANDIDATE_TERM);
+    assert!(granted);
+    assert_eq!(term, CANDIDATE_TERM);
+    assert_eq!(core.current_term(), CANDIDATE_TERM);
+    assert_eq!(core.voted_for(), Some(CANDIDATE_ID));
+}
+
+#[test]
+fn test_core_decide_vote_older_term() {
+    let mut core = NodeCore::new(NODE_ID);
+    const CANDIDATE_ID: u64 = 1;
+    const CANDIDATE_TERM: u64 = 0;
+    const CURRENT_TERM: u64 = 1;
+
+    // Set current term to 1
+    core.current_term = CURRENT_TERM;
+
+    // Test voting for candidate with older term
+    let (granted, term) = core.decide_vote(CANDIDATE_ID, CANDIDATE_TERM);
+    assert!(!granted); // Should not grant vote to candidate with older term
+    assert_eq!(term, CURRENT_TERM); // Should keep current term
+    assert_eq!(core.current_term(), CURRENT_TERM);
+    assert_eq!(core.voted_for(), None); // Should not record vote
+}
+
+#[test]
+fn test_core_decide_vote_already_voted() {
+    let mut core = NodeCore::new(NODE_ID);
+    const CANDIDATE_ID: u64 = 1;
+    const OTHER_CANDIDATE_ID: u64 = 2;
+    const TERM: u64 = 1;
+
+    // First vote
+    let (granted, term) = core.decide_vote(CANDIDATE_ID, TERM);
+    assert!(granted);
+    assert_eq!(term, TERM);
+    assert_eq!(core.voted_for(), Some(CANDIDATE_ID));
+
+    // Second vote for different candidate
+    let (granted, term) = core.decide_vote(OTHER_CANDIDATE_ID, TERM);
+    assert!(!granted);
+    assert_eq!(term, TERM);
+    assert_eq!(core.voted_for(), Some(CANDIDATE_ID));
+}
+
+#[test]
+fn test_core_record_vote_received() {
+    let mut core = NodeCore::new(NODE_ID);
+
+    // Setup: transition to candidate
+    core.transition_to_candidate();
+    assert_eq!(core.votes_received(), 1); // Self vote
+
+    // Record additional vote
+    core.record_vote_received();
+    assert_eq!(core.votes_received(), 2);
+}
+
+#[test]
+fn test_core_record_vote_received_not_candidate() {
+    let mut core = NodeCore::new(NODE_ID);
+
+    // Record vote while not in candidate state
+    core.record_vote_received();
+    assert_eq!(core.votes_received(), 0);
+}
+
+#[test]
+fn test_core_leader_append_entry() {
+    let mut core = NodeCore::new(NODE_ID);
+    const TERM: u64 = 1;
+
+    // Setup: transition to leader
+    core.transition_to_candidate();
+    core.transition_to_leader();
+
+    // Test successful append
+    let success = core.leader_append_entry("test".to_string());
+    assert!(success);
+    assert_eq!(core.log().len(), 1);
+    assert_eq!(core.log()[0].term, TERM);
+}
+
+#[test]
+fn test_core_leader_append_entry_not_leader() {
+    let mut core = NodeCore::new(NODE_ID);
+
+    // Test append while not in leader state
+    let success = core.leader_append_entry("test".to_string());
+    assert!(!success);
+    assert_eq!(core.log().len(), 0);
+}

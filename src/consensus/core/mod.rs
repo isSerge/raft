@@ -361,6 +361,7 @@ impl NodeCore {
     pub fn record_vote_received(&mut self) {
         if self.state() != NodeState::Candidate {
             warn!("Node {} attempted to record vote for self but is not a candidate", self.id);
+            return;
         }
 
         self.votes_received += 1;
