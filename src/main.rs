@@ -4,15 +4,15 @@ mod state_machine;
 mod utils;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use consensus::{ConsensusError, NodeServer};
-use log::{error, info};
+use consensus::{ConsensusError, ConsensusEvent, NodeServer};
+use log::{debug, error, info};
 use messaging::{Message, Network, NodeMessenger};
 use state_machine::StateMachine;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast};
 
 // Helper to send a command message to a specific node
 async fn send_command_to_node(
-    nodes_messengers: &HashMap<u64, NodeMessenger>, // Pass messengers map
+    nodes_messengers: &HashMap<u64, NodeMessenger>,
     node_id: u64,
     message: Message,
 ) -> Result<(), ConsensusError> {
@@ -25,17 +25,47 @@ async fn send_command_to_node(
     }
 }
 
+async fn wait_for_event(
+    rx: &mut broadcast::Receiver<ConsensusEvent>,
+    expected_event: ConsensusEvent,
+    timeout_duration: Duration,
+) -> Result<(), ConsensusError> {
+    let timeout = tokio::time::timeout(timeout_duration, rx.recv()).await;
+    match timeout {
+        Ok(Ok(event)) =>
+            if event == expected_event {
+                Ok(())
+            } else {
+                error!("Simulation: Expected event but got {:?}", event);
+                Err(ConsensusError::Timeout(
+                    "Simulation: Expected event {:?} but got {:?}".to_string(),
+                ))
+            },
+        Ok(Err(e)) => {
+            error!("Simulation: Error receiving event: {:?}", e);
+            Err(ConsensusError::Timeout("Simulation: Error receiving event".to_string()))
+        }
+        Err(_) => {
+            error!("Simulation: Timeout waiting for event {:?}", expected_event);
+            Err(ConsensusError::Timeout("Simulation: Timeout waiting for event {:?}".to_string()))
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), ConsensusError> {
     // Initialize logging
     env_logger::init();
+
+    // Create a broadcast channel for consensus events.
+    let (event_tx, mut event_rx) = broadcast::channel::<ConsensusEvent>(16);
 
     let network = Arc::new(Mutex::new(Network::new()));
     let mut nodes: HashMap<u64, Arc<Mutex<NodeServer>>> = HashMap::new();
     let mut nodes_messengers: HashMap<u64, NodeMessenger> = HashMap::new();
 
     let node_count = 2;
-    info!("Setting up {} nodes...", node_count);
+    info!("Simulation: Setting up {} nodes...", node_count);
 
     for id in 0..node_count {
         // Create a new node messenger and receiver
@@ -48,7 +78,13 @@ async fn main() -> Result<(), ConsensusError> {
         nodes_messengers.insert(id, node_messenger.clone());
 
         // Create a new node
-        let node_server = NodeServer::new(id, StateMachine::new(), node_messenger, node_receiver);
+        let node_server = NodeServer::new(
+            id,
+            StateMachine::new(),
+            node_messenger,
+            node_receiver,
+            event_tx.clone(),
+        );
         let node_server_arc = Arc::new(Mutex::new(node_server));
         // Store the node in the nodes map
         nodes.insert(id, node_server_arc.clone());
@@ -58,32 +94,72 @@ async fn main() -> Result<(), ConsensusError> {
             // Get the node id
             let node_server_id = { node_server_arc.lock().await.id() };
 
-            info!("Start processing messages for node {}", node_server_id);
+            info!("Simulation: Start processing messages for node {}", node_server_id);
 
-            // Process incoming messages
-            let mut node_locked = node_server_arc.lock().await;
-            if let Err(e) = node_locked.process_incoming_messages().await {
-                error!("Node {} error: {}", node_server_id, e);
+            loop {
+                let msg = {
+                    let mut node_locked = node_server_arc.lock().await;
+                    node_locked.receive_message().await.unwrap()
+                };
+
+                // Acquire lock for processing single message
+                let mut node_locked = node_server_arc.lock().await;
+
+                // Process message
+                let step_result = node_locked.process_message(msg).await;
+
+                match step_result {
+                    Ok(()) => {
+                        debug!("Simulation: Node {} finished step successfully.", node_server_id);
+                    }
+                    Err(e) => {
+                        error!(
+                            "!!! Simulation: Node {} task STOPPING NORMALLY: {:?}",
+                            node_server_id, e
+                        );
+                        break;
+                    }
+                }
+
+                tokio::task::yield_now().await;
             }
         });
     }
 
-    info!("Nodes initialized, tasks spawned");
+    info!("Simulation: Nodes initialized, tasks spawned");
 
-    info!("Starting election for node 0");
+    info!("Simulation: Starting election for node 0");
     send_command_to_node(&nodes_messengers, 0, Message::StartElectionCmd).await?;
 
-    // Give time for election to potentially happen
-    info!("Waiting for election process...");
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    // Wait for the LeaderElected event.
+    info!("Simulation: Waiting for leader elected event...");
+    wait_for_event(
+        &mut event_rx,
+        ConsensusEvent::LeaderElected { leader_id: 0 },
+        Duration::from_secs(10),
+    )
+    .await?;
 
-    info!("Starting append entries for node 1");
+    info!("Simulation: Starting append entries...");
+
     send_command_to_node(
         &nodes_messengers,
         0,
         Message::StartAppendEntriesCmd { command: "Hello, world!".to_string() },
     )
     .await?;
+
+    info!("Simulation: Waiting for entry committed event...");
+    wait_for_event(
+        &mut event_rx,
+        ConsensusEvent::EntryCommitted { entry: "Hello, world!".to_string() },
+        Duration::from_secs(10),
+    )
+    .await?;
+
+    info!("Simulation: Complete");
+    info!("Press Ctrl+C to exit.");
+    tokio::signal::ctrl_c().await.expect("failed to listen for ctrl+c");
 
     Ok(())
 }

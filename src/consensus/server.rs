@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use log::{debug, error, info, warn};
+use tokio::sync::broadcast;
 
 use crate::{
-    consensus::{ConsensusError, LogEntry, NodeCore, NodeState},
+    consensus::{ConsensusError, ConsensusEvent, LogEntry, NodeCore, NodeState},
     messaging::{Message, NodeMessenger, NodeReceiver},
     state_machine::StateMachine,
 };
@@ -15,6 +16,7 @@ pub struct NodeServer {
     pub state_machine: StateMachine,
     messenger: NodeMessenger,
     receiver: NodeReceiver,
+    event_tx: broadcast::Sender<ConsensusEvent>,
 }
 
 // NodeServer constructor
@@ -24,8 +26,9 @@ impl NodeServer {
         state_machine: StateMachine,
         messenger: NodeMessenger,
         receiver: NodeReceiver,
+        event_tx: broadcast::Sender<ConsensusEvent>,
     ) -> Self {
-        Self { core: NodeCore::new(id), state_machine, messenger, receiver }
+        Self { core: NodeCore::new(id), state_machine, messenger, receiver, event_tx }
     }
 }
 
@@ -64,6 +67,11 @@ impl NodeServer {
     /// Get the last applied index.
     pub fn last_applied(&self) -> u64 {
         self.core.last_applied()
+    }
+
+    /// Check if the node is a leader.
+    pub fn is_leader(&self) -> bool {
+        self.core.state() == NodeState::Leader
     }
 }
 
@@ -186,7 +194,7 @@ impl NodeServer {
         );
 
         let (vote_granted, term_to_respond) = self.core.decide_vote(candidate_id, candidate_term);
-        println!(
+        info!(
             "Node {} decided to {} vote for Node {} in term {}",
             self.id(),
             vote_granted,
@@ -325,6 +333,9 @@ impl NodeServer {
                 // Transition to leader
                 self.core.transition_to_leader();
 
+                // Signal that the node is now a leader
+                let _ = self.event_tx.send(ConsensusEvent::LeaderElected { leader_id: self.id() });
+
                 // Send an empty AppendEntries to all other nodes to establish leadership.
                 self.broadcast_append_entries(vec![]).await?;
             }
@@ -403,51 +414,47 @@ impl NodeServer {
         Ok(())
     }
 
-    /// Continuously process incoming messages.
-    pub async fn process_incoming_messages(&mut self) -> Result<(), ConsensusError> {
-        info!("Node {} starting message processing loop.", self.id());
-        loop {
-            let msg_arc = self.receive_message().await;
-
-            match msg_arc {
-                Ok(msg_arc) => match *msg_arc {
-                    Message::VoteRequest { term, candidate_id } => {
-                        self.handle_request_vote(term, candidate_id).await?;
-                    }
-                    Message::VoteResponse { term, vote_granted, from_id } => {
-                        self.handle_vote_response(term, from_id, vote_granted).await?;
-                    }
-                    Message::AppendEntries { term, leader_id, ref new_entries, commit_index } => {
-                        self.handle_append_entries(term, leader_id, new_entries, commit_index)
-                            .await?;
-                    }
-                    Message::AppendResponse { term, success, from_id } => {
-                        self.handle_append_response(term, success, from_id).await?;
-                    }
-                    Message::StartElectionCmd => {
-                        self.start_election().await?;
-                    }
-                    Message::StartAppendEntriesCmd { ref command } => {
-                        if self.core.state() == NodeState::Leader {
-                            self.start_append_entries(command.clone()).await?;
-                        } else {
-                            warn!(
-                                "Node {} received StartAppendEntriesCmd but is not a Leader. \
-                                 Ignoring.",
-                                self.id()
-                            );
-                        }
-                    }
-                },
-                Err(e) => {
-                    error!("Node {} failed to receive message: {:?}. Stopping loop.", self.id(), e);
-                    return Err(e);
+    /// Receives and processes a single message or timer event.
+    /// Returns Ok(()) if processed successfully, Err on error.
+    pub async fn process_message(&mut self, msg: Arc<Message>) -> Result<(), ConsensusError> {
+        match *msg {
+            Message::VoteRequest { term, candidate_id } => {
+                self.handle_request_vote(term, candidate_id).await?;
+            }
+            Message::VoteResponse { term, vote_granted, from_id } => {
+                self.handle_vote_response(term, from_id, vote_granted).await?;
+            }
+            Message::AppendEntries { term, leader_id, ref new_entries, commit_index } => {
+                self.handle_append_entries(term, leader_id, new_entries, commit_index).await?;
+            }
+            Message::AppendResponse { term, success, from_id } => {
+                self.handle_append_response(term, success, from_id).await?;
+            }
+            Message::StartElectionCmd => {
+                info!("Node {} received StartElectionCmd", self.id());
+                if self.state() != NodeState::Leader {
+                    self.start_election().await?;
+                } else {
+                    warn!(
+                        "Node {} received StartElectionCmd but is already a Leader. Ignoring.",
+                        self.id()
+                    );
                 }
             }
-
-            // Yield to other tasks to prevent busy-waiting
-            tokio::task::yield_now().await;
+            Message::StartAppendEntriesCmd { ref command } => {
+                info!("Node {} received StartAppendEntriesCmd: '{}'", self.id(), command);
+                if self.state() == NodeState::Leader {
+                    let _ = self.start_append_entries(command.clone()).await;
+                } else {
+                    warn!(
+                        "Node {} received StartAppendEntriesCmd but is not a Leader. Ignoring.",
+                        self.id()
+                    );
+                }
+            }
         }
+
+        Ok(())
     }
 }
 
@@ -455,8 +462,9 @@ impl NodeServer {
 impl NodeServer {
     /// Apply committed log entries to the state machine.
     fn apply_committed_entries(&mut self) {
-        let commit_idx = self.core.commit_index();
-        let mut last_applied = self.core.last_applied();
+        let commit_idx = self.core.commit_index(); // Raft index (1-based)
+        let mut last_applied = self.core.last_applied(); // also 1-based; 0 if none applied
+        let mut applied_any = false;
 
         if commit_idx > last_applied {
             info!(
@@ -466,8 +474,10 @@ impl NodeServer {
                 commit_idx
             );
 
-            for i in (last_applied + 1)..commit_idx {
-                if let Some(entry) = self.core.log().get(i as usize) {
+            // Use an inclusive range to include commit_idx.
+            // Convert Raft index to Vec index by subtracting 1.
+            for i in (last_applied + 1)..=commit_idx {
+                if let Some(entry) = self.core.log().get((i - 1) as usize) {
                     info!(
                         "Node {} applying log[{}] ('{}') to state machine.",
                         self.id(),
@@ -476,7 +486,8 @@ impl NodeServer {
                     );
                     // Apply the command to the state machine
                     self.state_machine.apply(1);
-                    last_applied = i; // Update last_applied *after* successful apply
+                    last_applied = i; // Update last_applied after successful apply
+                    applied_any = true;
                     info!(
                         "   -> Node {} new state machine value: {}",
                         self.id(),
@@ -484,7 +495,7 @@ impl NodeServer {
                     );
                 } else {
                     error!(
-                        "Node {} CRITICAL: Tried to apply non-existent log entry at index {}",
+                        "Node {} CRITICAL: Tried to apply non-existent log entry at Raft index {}",
                         self.id(),
                         i
                     );
@@ -492,8 +503,21 @@ impl NodeServer {
                 }
             }
 
-            // Update core's last_applied state *after* the loop finishes
+            // Update core's last_applied state after the loop finishes.
             self.core.set_last_applied(last_applied);
+        }
+
+        if applied_any {
+            let _ = self.event_tx.send(ConsensusEvent::EntryCommitted {
+                entry: self
+                    .core
+                    .log()
+                    // Use (commit_idx - 1) to convert to Vec index.
+                    .get((commit_idx - 1) as usize)
+                    .expect("Log should not be empty after applying entries")
+                    .command
+                    .clone(),
+            });
         }
     }
 }

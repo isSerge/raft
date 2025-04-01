@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast};
 
 use crate::{
     consensus::{ConsensusError, LogEntry, NodeServer, NodeState},
@@ -12,7 +12,13 @@ use crate::{
 
 /// Create a new node with a given id, messenger, and receiver.
 fn create_node(id: u64, node_messenger: NodeMessenger, node_receiver: NodeReceiver) -> NodeServer {
-    NodeServer::new(id, StateMachine::new(), node_messenger, node_receiver)
+    NodeServer::new(
+        id,
+        StateMachine::new(),
+        node_messenger,
+        node_receiver,
+        broadcast::channel(16).0,
+    )
 }
 
 /// Create a new network with a given number of nodes.
