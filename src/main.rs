@@ -1,3 +1,6 @@
+#![warn(missing_docs)]
+//! A simple Raft implementation in Rust
+
 mod consensus;
 mod messaging;
 mod state_machine;
@@ -10,7 +13,7 @@ use messaging::{Message, Network, NodeMessenger};
 use state_machine::StateMachine;
 use tokio::sync::{Mutex, broadcast};
 
-// Helper to send a command message to a specific node
+/// Helper to send a command message to a specific node
 async fn send_command_to_node(
     nodes_messengers: &HashMap<u64, NodeMessenger>,
     node_id: u64,
@@ -25,6 +28,7 @@ async fn send_command_to_node(
     }
 }
 
+/// Wait for an event to occur.
 async fn wait_for_event(
     rx: &mut broadcast::Receiver<ConsensusEvent>,
     expected_event: ConsensusEvent,
