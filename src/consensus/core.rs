@@ -568,4 +568,36 @@ mod tests {
         core.set_last_applied(1);
         assert_eq!(core.last_applied(), 0);
     }
+
+    #[test]
+    fn test_core_follower_update_commit_index_success() {
+        const LEADER_COMMIT_INDEX: u64 = 1;
+
+        let mut core = NodeCore::new(NODE_ID);
+
+        // check default values
+        assert_eq!(core.commit_index(), 0);
+
+        // add log entry because commit index can't be greater than log length
+        core.log.push(LogEntry::new(0, "test".to_string()));
+
+        core.follower_update_commit_index(LEADER_COMMIT_INDEX);
+
+        assert_eq!(core.commit_index(), LEADER_COMMIT_INDEX);
+    }
+
+    #[test]
+    fn test_core_follower_update_commit_index_failure() {
+        const LEADER_COMMIT_INDEX: u64 = 1;
+        const ORIGINAL_COMMIT_INDEX: u64 = 0;
+
+        let mut core = NodeCore::new(NODE_ID);
+
+        // check default values
+        assert_eq!(core.commit_index(), ORIGINAL_COMMIT_INDEX);
+
+        core.follower_update_commit_index(LEADER_COMMIT_INDEX);
+
+        assert_eq!(core.commit_index(), ORIGINAL_COMMIT_INDEX);
+    }
 }
