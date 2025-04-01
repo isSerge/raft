@@ -68,11 +68,6 @@ impl NodeServer {
     pub fn last_applied(&self) -> u64 {
         self.core.last_applied()
     }
-
-    /// Check if the node is a leader.
-    pub fn is_leader(&self) -> bool {
-        self.core.state() == NodeState::Leader
-    }
 }
 
 // RPC methods
@@ -118,7 +113,7 @@ impl NodeServer {
             return Err(ConsensusError::NotCandidate(self.id()));
         }
 
-        let term = self.core.current_term();
+        let term = self.current_term();
         let msg = Message::VoteRequest { term, candidate_id: self.id() };
         info!("Node {} broadcasting VoteRequest: {:?}", self.id(), msg);
         self.broadcast(msg).await
@@ -134,15 +129,15 @@ impl NodeServer {
             return Err(ConsensusError::NotLeader(self.id()));
         }
 
-        let term = self.core.current_term();
+        let term = self.current_term();
         let leader_id = self.id();
-        let commit_index = self.core.commit_index();
+        let commit_index = self.commit_index();
 
         info!(
             "Node {} (Leader Term: {}) broadcasting AppendEntries: commit_index={}, entries={}",
             self.id(),
-            self.core.current_term(),
-            self.core.commit_index(),
+            self.current_term(),
+            self.commit_index(),
             new_entries.len()
         );
 
@@ -156,7 +151,7 @@ impl NodeServer {
 impl NodeServer {
     /// Start an election.
     pub async fn start_election(&mut self) -> Result<(), ConsensusError> {
-        let new_term = self.core.current_term() + 1;
+        let new_term = self.current_term() + 1;
         info!("Node {} starting election for term {}", self.id(), new_term);
         self.core.transition_to_candidate();
         self.broadcast_vote_request().await
@@ -167,7 +162,7 @@ impl NodeServer {
         // Delegate appending to the core.
         if self.core.leader_append_entry(command) {
             let new_entry =
-                self.core.log().last().expect("Log should not be empty after appending").clone();
+                self.log().last().expect("Log should not be empty after appending").clone();
             info!(
                 "Node {} appended new entry to log: {:?}. Broadcasting to all other nodes.",
                 self.id(),
@@ -220,15 +215,15 @@ impl NodeServer {
         );
 
         // 1. If leader_term is older than current_term, reject
-        if leader_term < self.core.current_term() {
+        if leader_term < self.current_term() {
             warn!(
                 "Node {} rejecting AppendEntries from Node {} (LeaderTerm {} < CurrentTerm {})",
                 self.id(),
                 leader_id,
                 leader_term,
-                self.core.current_term()
+                self.current_term()
             );
-            return self.send_append_response(leader_id, false, self.core.current_term()).await;
+            return self.send_append_response(leader_id, false, self.current_term()).await;
         }
 
         // 2. If leader_term is equal or greater than current_term transition to
@@ -244,7 +239,7 @@ impl NodeServer {
                 self.id(),
                 leader_id
             );
-            return self.send_append_response(leader_id, false, self.core.current_term()).await;
+            return self.send_append_response(leader_id, false, self.current_term()).await;
         }
 
         // 5. Update commit_index
@@ -254,7 +249,7 @@ impl NodeServer {
         self.apply_committed_entries();
 
         // 6. send response to leader
-        self.send_append_response(leader_id, true, self.core.current_term()).await
+        self.send_append_response(leader_id, true, self.current_term()).await
     }
 
     /// Handle a vote response from a voter. Used by candidates to collect
@@ -282,7 +277,7 @@ impl NodeServer {
             return Ok(());
         }
 
-        if term < self.core.current_term() {
+        if term < self.current_term() {
             debug!(
                 "Node {} received VoteResponse for older term {} from Node {}, ignoring.",
                 self.id(),
@@ -292,7 +287,7 @@ impl NodeServer {
             return Ok(());
         }
 
-        if term > self.core.current_term() {
+        if term > self.current_term() {
             info!(
                 "Node {} sees newer term {} in VoteResponse from Node {}, transitioning to \
                  Follower.",
@@ -327,7 +322,7 @@ impl NodeServer {
                     self.id(),
                     self.core.votes_received(),
                     total_nodes,
-                    self.core.current_term()
+                    self.current_term()
                 );
 
                 // Transition to leader
@@ -376,7 +371,7 @@ impl NodeServer {
             return Ok(());
         }
 
-        if term > self.core.current_term() {
+        if term > self.current_term() {
             info!(
                 "Node {} (Leader) sees newer term {} in AppendResponse from follower {}, \
                  transitioning to Follower.",
@@ -388,7 +383,7 @@ impl NodeServer {
             return Ok(());
         }
 
-        if term < self.core.current_term() {
+        if term < self.current_term() {
             debug!(
                 "Node {} (Leader) received stale AppendResponse from Node {} for term {}. \
                  Ignoring.",
@@ -462,8 +457,8 @@ impl NodeServer {
 impl NodeServer {
     /// Apply committed log entries to the state machine.
     fn apply_committed_entries(&mut self) {
-        let commit_idx = self.core.commit_index(); // Raft index (1-based)
-        let mut last_applied = self.core.last_applied(); // also 1-based; 0 if none applied
+        let commit_idx = self.commit_index(); // Raft index (1-based)
+        let mut last_applied = self.last_applied(); // also 1-based; 0 if none applied
         let mut applied_any = false;
 
         if commit_idx > last_applied {
@@ -477,7 +472,7 @@ impl NodeServer {
             // Use an inclusive range to include commit_idx.
             // Convert Raft index to Vec index by subtracting 1.
             for i in (last_applied + 1)..=commit_idx {
-                if let Some(entry) = self.core.log().get((i - 1) as usize) {
+                if let Some(entry) = self.log().get((i - 1) as usize) {
                     info!(
                         "Node {} applying log[{}] ('{}') to state machine.",
                         self.id(),
@@ -510,7 +505,6 @@ impl NodeServer {
         if applied_any {
             let _ = self.event_tx.send(ConsensusEvent::EntryCommitted {
                 entry: self
-                    .core
                     .log()
                     // Use (commit_idx - 1) to convert to Vec index.
                     .get((commit_idx - 1) as usize)
