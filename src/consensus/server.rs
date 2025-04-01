@@ -106,6 +106,7 @@ impl NodeServer {
         self.messenger.send_to(candidate_id, Arc::new(msg)).await.map_err(ConsensusError::Transport)
     }
 
+    // TODO: make private after tests are updated
     /// Broadcast a vote request to all other nodes.
     pub async fn broadcast_vote_request(&self) -> Result<(), ConsensusError> {
         if self.core.state() != NodeState::Candidate {
@@ -119,6 +120,7 @@ impl NodeServer {
         self.broadcast(msg).await
     }
 
+    // TODO: make private after tests are updated
     /// Broadcast an AppendEntries request to all other nodes.
     pub async fn broadcast_append_entries(
         &self,
@@ -150,13 +152,14 @@ impl NodeServer {
 // Command handlers
 impl NodeServer {
     /// Start an election.
-    pub async fn start_election(&mut self) -> Result<(), ConsensusError> {
+    async fn start_election(&mut self) -> Result<(), ConsensusError> {
         let new_term = self.current_term() + 1;
         info!("Node {} starting election for term {}", self.id(), new_term);
         self.core.transition_to_candidate();
         self.broadcast_vote_request().await
     }
 
+    // TODO: make private after tests are updated
     /// Start an AppendEntries
     pub async fn start_append_entries(&mut self, command: String) -> Result<(), ConsensusError> {
         // Delegate appending to the core.
@@ -175,6 +178,7 @@ impl NodeServer {
         }
     }
 
+    // TODO: make private after tests are updated
     /// Handle a request vote from a candidate
     pub async fn handle_request_vote(
         &mut self,
@@ -199,6 +203,7 @@ impl NodeServer {
         self.send_vote_response(candidate_id, vote_granted, term_to_respond).await
     }
 
+    // TODO: make private after tests are updated
     /// Handle an AppendEntries request from a leader
     pub async fn handle_append_entries(
         &mut self,
@@ -254,7 +259,7 @@ impl NodeServer {
 
     /// Handle a vote response from a voter. Used by candidates to collect
     /// votes.
-    pub async fn handle_vote_response(
+    async fn handle_vote_response(
         &mut self,
         term: u64,
         voter_id: u64,
@@ -348,7 +353,7 @@ impl NodeServer {
 
     /// Handle an AppendResponse from a follower. Used by leaders to
     /// determine if they have received a majority of responses.
-    pub async fn handle_append_response(
+    async fn handle_append_response(
         &mut self,
         term: u64,
         success: bool,
