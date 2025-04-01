@@ -117,7 +117,7 @@ impl NodeCore {
     /// Update the term of the node and reset the vote if new_term is greater
     /// than current_term. Returns true if the term was updated, false
     /// otherwise.
-    pub fn update_term(&mut self, new_term: u64) -> bool {
+    fn update_term(&mut self, new_term: u64) -> bool {
         if new_term > self.current_term() {
             info!("Node {} updated term from {} to {}", self.id, self.current_term, new_term);
             self.current_term = new_term;
@@ -270,7 +270,7 @@ impl NodeCore {
 
     /// Check if the log is consistent with another log.
     // TODO: Implement this.
-    pub fn check_log_consistency(&self) -> bool {
+    fn check_log_consistency(&self) -> bool {
         true
     }
 
@@ -343,7 +343,7 @@ impl NodeCore {
 
     /// Record a vote for a candidate if not already voted for someone else.
     /// Returns `(vote_granted, term_to_respond_with)`
-    pub fn grant_vote_if_possible(&mut self, candidate_id: u64) -> (bool, u64) {
+    fn grant_vote_if_possible(&mut self, candidate_id: u64) -> (bool, u64) {
         match self.voted_for() {
             Some(voted_for) => (voted_for == candidate_id, self.current_term()),
             None => {
