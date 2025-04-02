@@ -3,6 +3,7 @@ mod error;
 mod event;
 mod log_entry;
 mod server;
+mod timer;
 
 pub use core::*;
 
