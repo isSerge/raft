@@ -1,12 +1,14 @@
 #![warn(missing_docs)]
 //! A simple Raft implementation in Rust
 
+mod config;
 mod consensus;
 mod messaging;
 mod state_machine;
-mod utils;
+
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
+use config::Config;
 use consensus::{ConsensusError, ConsensusEvent, NodeServer, NodeTimer};
 use log::{debug, error, info};
 use messaging::{Message, Network, NodeMessenger};
@@ -61,6 +63,9 @@ async fn main() -> Result<(), ConsensusError> {
     // Initialize logging
     env_logger::init();
 
+    // Create a config
+    let config = Config { node_count: 2, ..Default::default() };
+
     // Create a broadcast channel for consensus events.
     let (event_tx, mut event_rx) = broadcast::channel::<ConsensusEvent>(16);
 
@@ -68,10 +73,9 @@ async fn main() -> Result<(), ConsensusError> {
     let mut nodes: HashMap<u64, Arc<Mutex<NodeServer>>> = HashMap::new();
     let mut nodes_messengers: HashMap<u64, NodeMessenger> = HashMap::new();
 
-    let node_count = 2;
-    info!("Simulation: Setting up {} nodes...", node_count);
+    info!("Simulation: Setting up {} nodes...", config.node_count);
 
-    for id in 0..node_count {
+    for id in 0..config.node_count as u64 {
         // Create a new node messenger and receiver
         let (node_messenger, mut node_receiver) = NodeMessenger::new(id, network.clone());
 
@@ -82,7 +86,7 @@ async fn main() -> Result<(), ConsensusError> {
         nodes_messengers.insert(id, node_messenger.clone());
 
         // Create a new timer
-        let mut timer = NodeTimer::new();
+        let mut timer = NodeTimer::new(config.clone());
 
         // Create a new node
         let node_server =
