@@ -21,12 +21,12 @@ pub enum TimerType {
 
 /// Timers for elections and heartbeats.
 #[derive(Debug)]
-pub struct RaftTimer {
+pub struct NodeTimer {
     /// The currently active timer and its type.
     active_timer: (TimerType, Pin<Box<Sleep>>), // No longer Option
 }
 
-impl RaftTimer {
+impl NodeTimer {
     pub fn new() -> Self {
         // Initialize directly with an election timer
         let initial_type = TimerType::Election;
@@ -116,7 +116,7 @@ mod tests {
     #[tokio::test]
     async fn test_initial_timer_is_election() {
         // No time manipulation needed here, just check the initial state
-        let timer = RaftTimer::new();
+        let timer = NodeTimer::new();
         assert_eq!(timer.active_timer.0, TimerType::Election, "Initial timer should be Election");
     }
 
@@ -124,7 +124,7 @@ mod tests {
     async fn test_election_timer_expires_after_timeout() {
         time::pause();
 
-        let mut timer = RaftTimer::new();
+        let mut timer = NodeTimer::new();
         assert_eq!(timer.active_timer.0, TimerType::Election);
 
         // Check it doesn't expire too early
@@ -149,7 +149,7 @@ mod tests {
     async fn test_heartbeat_timer_expires_after_timeout() {
         time::pause();
 
-        let mut timer = RaftTimer::new();
+        let mut timer = NodeTimer::new();
         // Switch to heartbeat
         timer.reset_heartbeat_timer();
         assert_eq!(timer.active_timer.0, TimerType::Heartbeat);
@@ -175,7 +175,7 @@ mod tests {
     #[tokio::test]
     async fn test_auto_reset_after_heartbeat_timeout() {
         time::pause();
-        let mut timer = RaftTimer::new();
+        let mut timer = NodeTimer::new();
 
         // Switch to heartbeat
         timer.reset_heartbeat_timer();
@@ -197,7 +197,7 @@ mod tests {
     #[tokio::test]
     async fn test_auto_reset_after_election_timeout() {
         time::pause();
-        let mut timer = RaftTimer::new();
+        let mut timer = NodeTimer::new();
 
         // Make sure we start with an election timer
         assert_eq!(timer.active_timer.0, TimerType::Election);

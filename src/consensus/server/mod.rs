@@ -7,7 +7,9 @@ use log::{debug, error, info, warn};
 use tokio::sync::broadcast;
 
 use crate::{
-    consensus::{ConsensusError, ConsensusEvent, LogEntry, NodeCore, NodeState},
+    consensus::{
+        ConsensusError, ConsensusEvent, LogEntry, NodeCore, NodeState, NodeTimer, TimerType,
+    },
     messaging::{Message, NodeMessenger, NodeReceiver},
     state_machine::StateMachine,
 };
@@ -15,6 +17,7 @@ use crate::{
 #[derive(Debug)]
 pub struct NodeServer {
     core: NodeCore,
+    timer: NodeTimer,
     pub state_machine: StateMachine,
     messenger: NodeMessenger,
     receiver: NodeReceiver,
@@ -30,7 +33,14 @@ impl NodeServer {
         receiver: NodeReceiver,
         event_tx: broadcast::Sender<ConsensusEvent>,
     ) -> Self {
-        Self { core: NodeCore::new(id), state_machine, messenger, receiver, event_tx }
+        Self {
+            core: NodeCore::new(id),
+            timer: NodeTimer::new(),
+            state_machine,
+            messenger,
+            receiver,
+            event_tx,
+        }
     }
 }
 
@@ -190,14 +200,39 @@ impl NodeServer {
             candidate_term
         );
 
+        // Check if we have to step down
+        if candidate_term >= self.current_term() {
+            info!(
+                "Node {} received VoteRequest for term {} from Node {}, transitioning to Follower.",
+                self.id(),
+                candidate_term,
+                candidate_id
+            );
+            self.core.transition_to_follower(candidate_term);
+            self.timer.reset_election_timer();
+        }
+
         let (vote_granted, term_to_respond) = self.core.decide_vote(candidate_id, candidate_term);
-        info!(
-            "Node {} decided to {} vote for Node {} in term {}",
-            self.id(),
-            vote_granted,
-            candidate_id,
-            term_to_respond
-        );
+
+        if vote_granted {
+            info!(
+                "Node {} decided to GRANT vote for Node {} in term {}",
+                self.id(),
+                candidate_id,
+                term_to_respond
+            );
+
+            self.timer.reset_election_timer();
+        } else {
+            info!(
+                "Node {} decided to REJECT vote for Node {} in term {}",
+                self.id(),
+                candidate_id,
+                term_to_respond
+            );
+        }
+
+        // Send response to candidate
         self.send_vote_response(candidate_id, vote_granted, term_to_respond).await
     }
 
@@ -228,11 +263,14 @@ impl NodeServer {
             return self.send_append_response(leader_id, false, self.current_term()).await;
         }
 
-        // 2. If leader_term is equal or greater than current_term transition to
-        //    follower
+        // Leader is up to date
+        // 2. Reset timer
+        self.timer.reset_election_timer();
+
+        // 3. Transition to follower
         self.core.transition_to_follower(leader_term);
 
-        // 3. Check log consistency and append log entries to own log
+        // 4. Check log consistency and append log entries to own log
         let (is_log_consistent, _log_modified) = self.core.follower_append_entries(new_entries);
 
         if !is_log_consistent {
@@ -247,10 +285,13 @@ impl NodeServer {
         // 5. Update commit_index
         self.core.follower_update_commit_index(leader_commit_index);
 
-        // 5. apply log entries to state machine
+        // 6. Apply log entries to state machine
         self.apply_committed_entries();
 
-        // 6. send response to leader
+        // 7. Reset heartbeat timer
+        self.timer.reset_heartbeat_timer();
+
+        // 8. Send response to leader
         self.send_append_response(leader_id, true, self.current_term()).await
     }
 
@@ -297,7 +338,9 @@ impl NodeServer {
                 term,
                 voter_id
             );
+            // Convert to follower and reset election timer
             self.core.transition_to_follower(term);
+            self.timer.reset_election_timer();
             return Ok(());
         }
 
@@ -329,6 +372,8 @@ impl NodeServer {
 
                 // Transition to leader
                 self.core.transition_to_leader();
+                // Start heartbeat timer
+                self.timer.reset_heartbeat_timer();
 
                 // Signal that the node is now a leader
                 let _ = self.event_tx.send(ConsensusEvent::LeaderElected { leader_id: self.id() });
@@ -381,7 +426,9 @@ impl NodeServer {
                 term,
                 from_id
             );
+            // Convert to follower and reset election timer
             self.core.transition_to_follower(term);
+            self.timer.reset_election_timer();
             return Ok(());
         }
 
@@ -408,6 +455,40 @@ impl NodeServer {
 
         // TODO: Trigger resend if success was false and next_index was decremented
 
+        Ok(())
+    }
+
+    /// Send a heartbeat to all other nodes.
+    async fn send_heartbeat(&self) -> Result<(), ConsensusError> {
+        info!("Node {} sending heartbeat to all other nodes", self.id());
+        self.broadcast_append_entries(vec![]).await
+    }
+
+    /// Handle a timer event (election or heartbeat timeout).
+    async fn handle_timer_event(&mut self, timer_type: TimerType) -> Result<(), ConsensusError> {
+        match timer_type {
+            TimerType::Election =>
+                if self.state() != NodeState::Leader {
+                    self.start_election().await?;
+                } else {
+                    warn!(
+                        "Node {} received election timer event but is already a Leader. Ignoring.",
+                        self.id()
+                    );
+                    self.timer.reset_heartbeat_timer();
+                },
+            TimerType::Heartbeat =>
+                if self.state() == NodeState::Leader {
+                    self.send_heartbeat().await?;
+                } else {
+                    warn!(
+                        "Node {} received heartbeat timer event but is not a Leader. Ignoring.",
+                        self.id()
+                    );
+
+                    self.timer.reset_election_timer();
+                },
+        }
         Ok(())
     }
 

@@ -11,3 +11,4 @@ pub use error::ConsensusError;
 pub use event::ConsensusEvent;
 pub use log_entry::LogEntry;
 pub use server::*;
+pub use timer::*;
