@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, broadcast};
 
 use crate::{
+    config::Config,
     consensus::{ConsensusError, LogEntry, NodeServer, NodeState, NodeTimer},
     messaging::{Message, Network, NodeMessenger, NodeReceiver},
     state_machine::StateMachine,
@@ -78,6 +79,12 @@ async fn receive_message(receiver: &mut NodeReceiver) -> Result<Arc<Message>, Co
     receiver.receive().await.map_err(ConsensusError::Transport)
 }
 
+/// Helper function to create a timer
+fn create_timer() -> NodeTimer {
+    let config = Config::default();
+    NodeTimer::new(config)
+}
+
 #[tokio::test]
 async fn test_node_broadcast_vote_request_fails_if_not_candidate() {
     const NODE_ID: u64 = 0;
@@ -98,7 +105,7 @@ async fn test_node_broadcast_append_entries_sends_message_to_all_nodes() {
     let mut nodes = create_network(2).await;
 
     // get the nodes
-    let (node_leader, _, node_follower, follower_receiver) = get_two_nodes(&mut nodes);
+    let (node_leader, _, _, follower_receiver) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
     node_leader.core.transition_to_candidate(); // sets term to 1
@@ -132,7 +139,7 @@ async fn test_node_broadcast_vote_request_sends_message_to_all_nodes() {
     let mut nodes = create_network(2).await;
 
     // get the nodes
-    let (node_leader, _, node_follower, follower_receiver) = get_two_nodes(&mut nodes);
+    let (node_leader, _, _, follower_receiver) = get_two_nodes(&mut nodes);
 
     // transition node 1 to candidate
     node_leader.core.transition_to_candidate();
@@ -188,7 +195,7 @@ async fn test_node_send_append_response() {
                     leader_id,
                     new_entries,
                     commit_index,
-                    &mut NodeTimer::new(),
+                    &mut create_timer(),
                 )
                 .await
                 .unwrap();
@@ -238,7 +245,7 @@ async fn test_node_send_vote_response() {
     if let Ok(msg_arc) = message {
         if let Message::VoteRequest { term, candidate_id } = *msg_arc {
             node_follower
-                .handle_request_vote(term, candidate_id, &mut NodeTimer::new())
+                .handle_request_vote(term, candidate_id, &mut create_timer())
                 .await
                 .unwrap();
         } else {
@@ -292,7 +299,7 @@ async fn test_node_handle_request_vote_rejects_older_term() {
     if let Ok(msg_arc) = message {
         if let Message::VoteRequest { term, candidate_id } = *msg_arc {
             node_follower
-                .handle_request_vote(term, candidate_id, &mut NodeTimer::new())
+                .handle_request_vote(term, candidate_id, &mut create_timer())
                 .await
                 .unwrap();
 
@@ -341,7 +348,7 @@ async fn test_node_handle_request_vote_accepts_newer_term() {
     if let Ok(msg_arc) = message {
         if let Message::VoteRequest { term, candidate_id } = *msg_arc {
             node_follower
-                .handle_request_vote(term, candidate_id, &mut NodeTimer::new())
+                .handle_request_vote(term, candidate_id, &mut create_timer())
                 .await
                 .unwrap();
 
@@ -390,7 +397,7 @@ async fn test_node_handle_request_vote_accepts_equal_term() {
     if let Ok(msg_arc) = message {
         if let Message::VoteRequest { term, candidate_id } = *msg_arc {
             node_follower
-                .handle_request_vote(term, candidate_id, &mut NodeTimer::new())
+                .handle_request_vote(term, candidate_id, &mut create_timer())
                 .await
                 .unwrap();
 
@@ -443,7 +450,7 @@ async fn test_node_handle_request_vote_rejects_if_already_voted() {
     if let Ok(msg_arc) = message {
         if let Message::VoteRequest { term, candidate_id } = *msg_arc {
             node_follower
-                .handle_request_vote(term, candidate_id, &mut NodeTimer::new())
+                .handle_request_vote(term, candidate_id, &mut create_timer())
                 .await
                 .unwrap();
 
@@ -495,7 +502,7 @@ async fn test_node_handle_request_vote_accepts_if_not_voted() {
     if let Ok(msg_arc) = message {
         if let Message::VoteRequest { term, candidate_id } = *msg_arc {
             node_follower
-                .handle_request_vote(term, candidate_id, &mut NodeTimer::new())
+                .handle_request_vote(term, candidate_id, &mut create_timer())
                 .await
                 .unwrap();
 
@@ -553,7 +560,7 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
                     leader_id,
                     new_entries,
                     commit_index,
-                    &mut NodeTimer::new(),
+                    &mut create_timer(),
                 )
                 .await
                 .unwrap();
@@ -614,7 +621,7 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
                     leader_id,
                     new_entries,
                     commit_index,
-                    &mut NodeTimer::new(),
+                    &mut create_timer(),
                 )
                 .await
                 .unwrap();
@@ -672,7 +679,7 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
                     leader_id,
                     new_entries,
                     commit_index,
-                    &mut NodeTimer::new(),
+                    &mut create_timer(),
                 )
                 .await
                 .unwrap();
@@ -746,7 +753,7 @@ async fn test_node_start_append_entries_sends_append_entries_to_all_nodes() {
     const NODE_ID: u64 = 0;
     const COMMAND: &str = "test command";
     let mut nodes = create_network(2).await;
-    let (node_leader, _, node_follower, follower_receiver) = get_two_nodes(&mut nodes);
+    let (node_leader, _, _, follower_receiver) = get_two_nodes(&mut nodes);
 
     // start as follower, transition to candidate
     node_leader.core.transition_to_candidate(); // sets term to 1, votes for self
@@ -794,8 +801,7 @@ async fn test_node_handle_append_entries_rejects_on_inconsistent_log() {
 async fn test_node_process_message_handles_append_entries() {
     // Create a network with two nodes.
     let mut nodes = create_network(2).await;
-    let (node_leader, leader_receiver, node_follower, follower_receiver) =
-        get_two_nodes(&mut nodes);
+    let (node_leader, leader_receiver, node_follower, _) = get_two_nodes(&mut nodes);
 
     // Set up the follower to have the same term.
     node_follower.core.transition_to_follower(1);
@@ -810,7 +816,7 @@ async fn test_node_process_message_handles_append_entries() {
 
     // Process the message using the follower's process_message method.
     node_follower
-        .process_message(std::sync::Arc::new(append_msg), &mut NodeTimer::new())
+        .process_message(std::sync::Arc::new(append_msg), &mut create_timer())
         .await
         .expect("process_message failed for AppendEntries");
 
@@ -834,8 +840,7 @@ async fn test_node_process_message_handles_append_entries() {
 #[tokio::test]
 async fn test_node_process_message_vote_request() {
     let mut nodes = create_network(2).await;
-    let (node_candidate, candidate_receiver, node_follower, follower_receiver) =
-        get_two_nodes(&mut nodes);
+    let (node_candidate, candidate_receiver, node_follower, _) = get_two_nodes(&mut nodes);
 
     // Prepare: ensure candidate is in Candidate state.
     node_candidate.core.transition_to_candidate();
@@ -848,7 +853,7 @@ async fn test_node_process_message_vote_request() {
 
     // Process the VoteRequest on the follower.
     node_follower
-        .process_message(std::sync::Arc::new(vote_request), &mut NodeTimer::new())
+        .process_message(std::sync::Arc::new(vote_request), &mut create_timer())
         .await
         .unwrap();
 
@@ -867,8 +872,7 @@ async fn test_node_process_message_vote_request() {
 #[tokio::test]
 async fn test_node_process_message_vote_response() {
     let mut nodes = create_network(2).await;
-    let (node_candidate, candidate_receiver, node_follower, follower_receiver) =
-        get_two_nodes(&mut nodes);
+    let (node_candidate, _, node_follower, follower_receiver) = get_two_nodes(&mut nodes);
 
     // Prepare: candidate starts an election.
     node_candidate.core.transition_to_candidate();
@@ -882,7 +886,7 @@ async fn test_node_process_message_vote_response() {
 
     // Process the VoteResponse on the candidate.
     node_candidate
-        .process_message(std::sync::Arc::new(vote_response), &mut NodeTimer::new())
+        .process_message(std::sync::Arc::new(vote_response), &mut create_timer())
         .await
         .unwrap();
 
@@ -932,13 +936,7 @@ async fn test_node_process_message_append_response() {
         .expect("Expected AppendEntries message on follower1");
     if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg1 {
         node_follower1
-            .handle_append_entries(
-                term,
-                leader_id,
-                new_entries,
-                commit_index,
-                &mut NodeTimer::new(),
-            )
+            .handle_append_entries(term, leader_id, new_entries, commit_index, &mut create_timer())
             .await
             .unwrap();
     } else {
@@ -950,13 +948,7 @@ async fn test_node_process_message_append_response() {
         .expect("Expected AppendEntries message on follower2");
     if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg2 {
         node_follower2
-            .handle_append_entries(
-                term,
-                leader_id,
-                new_entries,
-                commit_index,
-                &mut NodeTimer::new(),
-            )
+            .handle_append_entries(term, leader_id, new_entries, commit_index, &mut create_timer())
             .await
             .unwrap();
     } else {
@@ -966,11 +958,11 @@ async fn test_node_process_message_append_response() {
     // Leader now receives AppendResponse messages from both followers.
     let resp1 =
         receive_message(leader_receiver).await.expect("Expected AppendResponse from follower1");
-    node_leader.process_message(resp1, &mut NodeTimer::new()).await.unwrap();
+    node_leader.process_message(resp1, &mut create_timer()).await.unwrap();
 
     let resp2 =
         receive_message(leader_receiver).await.expect("Expected AppendResponse from follower2");
-    node_leader.process_message(resp2, &mut NodeTimer::new()).await.unwrap();
+    node_leader.process_message(resp2, &mut create_timer()).await.unwrap();
 
     // Verify that the leader's commit index has been updated.
     assert!(
@@ -982,15 +974,14 @@ async fn test_node_process_message_append_response() {
 #[tokio::test]
 async fn test_node_process_message_start_election_cmd_not_leader() {
     let mut nodes = create_network(2).await;
-    let (node_candidate, candidate_receiver, node_follower, follower_receiver) =
-        get_two_nodes(&mut nodes);
+    let (node_candidate, _, _, follower_receiver) = get_two_nodes(&mut nodes);
 
     // Ensure the node is not a leader (i.e. still a Follower).
     assert_eq!(node_candidate.state(), NodeState::Follower);
 
     // Process a StartElectionCmd message.
     node_candidate
-        .process_message(std::sync::Arc::new(Message::StartElectionCmd), &mut NodeTimer::new())
+        .process_message(std::sync::Arc::new(Message::StartElectionCmd), &mut create_timer())
         .await
         .unwrap();
 
@@ -1017,7 +1008,7 @@ async fn test_node_process_message_start_election_cmd_already_leader() {
     node.core.transition_to_leader();
 
     // Process a StartElectionCmd message.
-    node.process_message(std::sync::Arc::new(Message::StartElectionCmd), &mut NodeTimer::new())
+    node.process_message(std::sync::Arc::new(Message::StartElectionCmd), &mut create_timer())
         .await
         .unwrap();
 
@@ -1031,8 +1022,7 @@ async fn test_node_process_message_start_election_cmd_already_leader() {
 #[tokio::test]
 async fn test_node_process_message_start_append_entries_cmd_as_leader() {
     let mut nodes = create_network(2).await;
-    let (node_leader, leader_receiver, node_follower, follower_receiver) =
-        get_two_nodes(&mut nodes);
+    let (node_leader, _, _, follower_receiver) = get_two_nodes(&mut nodes);
 
     // Prepare: transition the node to Candidate then Leader.
     node_leader.core.transition_to_candidate();
@@ -1043,7 +1033,7 @@ async fn test_node_process_message_start_append_entries_cmd_as_leader() {
     node_leader
         .process_message(
             std::sync::Arc::new(Message::StartAppendEntriesCmd { command: cmd.clone() }),
-            &mut NodeTimer::new(),
+            &mut create_timer(),
         )
         .await
         .unwrap();
@@ -1078,7 +1068,7 @@ async fn test_node_process_message_start_append_entries_cmd_not_leader() {
     let cmd = "test cmd".to_string();
     node.process_message(
         std::sync::Arc::new(Message::StartAppendEntriesCmd { command: cmd.clone() }),
-        &mut NodeTimer::new(),
+        &mut create_timer(),
     )
     .await
     .unwrap();
