@@ -21,12 +21,12 @@ pub enum TimerType {
 
 /// Timers for elections and heartbeats.
 #[derive(Debug)]
-pub struct RaftTimers {
+pub struct RaftTimer {
     /// The currently active timer and its type.
     active_timer: (TimerType, Pin<Box<Sleep>>), // No longer Option
 }
 
-impl RaftTimers {
+impl RaftTimer {
     pub fn new() -> Self {
         // Initialize directly with an election timer
         let initial_type = TimerType::Election;
@@ -38,7 +38,7 @@ impl RaftTimers {
     /// Generate a random election timeout within the range of
     /// `ELECTION_TIMEOUT_MIN` and `ELECTION_TIMEOUT_MAX`.
     fn random_election_timeout() -> Duration {
-        rand::thread_rng().gen_range(ELECTION_TIMEOUT_MIN..=ELECTION_TIMEOUT_MAX)
+        rand::rng().random_range(ELECTION_TIMEOUT_MIN..=ELECTION_TIMEOUT_MAX)
     }
 
     /// Calculate the deadline for a timer based on its type.
@@ -82,5 +82,136 @@ impl RaftTimers {
         }
 
         expired_timer_type
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::time::{self, Duration, timeout};
+
+    use super::*;
+
+    // Helper function to get a duration slightly longer than the max election
+    // timeout
+    fn after_max_election() -> Duration {
+        ELECTION_TIMEOUT_MAX + Duration::from_millis(10)
+    }
+
+    // Helper function to get a duration slightly shorter than the min election
+    // timeout
+    fn before_min_election() -> Duration {
+        // Ensure it's not negative if ELECTION_TIMEOUT_MIN is very small
+        ELECTION_TIMEOUT_MIN.checked_sub(Duration::from_millis(10)).unwrap_or_default()
+    }
+
+    // Helper function for heartbeat interval checks
+    fn after_heartbeat() -> Duration {
+        HEARTBEAT_INTERVAL + Duration::from_millis(10)
+    }
+
+    fn before_heartbeat() -> Duration {
+        HEARTBEAT_INTERVAL.checked_sub(Duration::from_millis(10)).unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn test_initial_timer_is_election() {
+        // No time manipulation needed here, just check the initial state
+        let timer = RaftTimer::new();
+        assert_eq!(timer.active_timer.0, TimerType::Election, "Initial timer should be Election");
+    }
+
+    #[tokio::test]
+    async fn test_election_timer_expires_after_timeout() {
+        time::pause();
+
+        let mut timer = RaftTimer::new();
+        assert_eq!(timer.active_timer.0, TimerType::Election);
+
+        // Check it doesn't expire too early
+        let res_early = timeout(before_min_election(), timer.wait_for_timer_and_emit_event()).await;
+        assert!(res_early.is_err(), "Timer should not expire before minimum election timeout");
+
+        // Advance time past the maximum possible expiry
+        time::advance(after_max_election()).await;
+
+        // Should expire immediately when awaited
+        let res_expired =
+            timeout(Duration::from_millis(1), timer.wait_for_timer_and_emit_event()).await;
+        assert!(res_expired.is_ok(), "Timer should have expired");
+        assert_eq!(
+            res_expired.unwrap(),
+            TimerType::Election,
+            "Expired timer type should be Election"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_heartbeat_timer_expires_after_timeout() {
+        time::pause();
+
+        let mut timer = RaftTimer::new();
+        // Switch to heartbeat
+        timer.reset_heartbeat_timer();
+        assert_eq!(timer.active_timer.0, TimerType::Heartbeat);
+
+        // Check it doesn't expire too early
+        let res_early = timeout(before_heartbeat(), timer.wait_for_timer_and_emit_event()).await;
+        assert!(res_early.is_err(), "Timer should not expire before heartbeat interval");
+
+        // Advance time past the heartbeat interval
+        time::advance(after_heartbeat()).await;
+
+        // Should expire immediately when awaited
+        let res_expired =
+            timeout(Duration::from_millis(1), timer.wait_for_timer_and_emit_event()).await;
+        assert!(res_expired.is_ok(), "Timer should have expired");
+        assert_eq!(
+            res_expired.unwrap(),
+            TimerType::Heartbeat,
+            "Expired timer type should be Heartbeat"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auto_reset_after_heartbeat_timeout() {
+        time::pause();
+        let mut timer = RaftTimer::new();
+
+        // Switch to heartbeat
+        timer.reset_heartbeat_timer();
+        assert_eq!(timer.active_timer.0, TimerType::Heartbeat);
+
+        // Advance time past the heartbeat interval
+        time::advance(after_heartbeat()).await;
+
+        // Should expire immediately when awaited
+        let res_expired =
+            timeout(Duration::from_millis(1), timer.wait_for_timer_and_emit_event()).await;
+        assert!(res_expired.is_ok(), "Timer should have expired");
+
+        // Should reset to heartbeat
+        assert_eq!(timer.active_timer.0, TimerType::Heartbeat);
+        assert!(timer.active_timer.1.deadline() > Instant::now());
+    }
+
+    #[tokio::test]
+    async fn test_auto_reset_after_election_timeout() {
+        time::pause();
+        let mut timer = RaftTimer::new();
+
+        // Make sure we start with an election timer
+        assert_eq!(timer.active_timer.0, TimerType::Election);
+
+        // Advance time past the election timeout
+        time::advance(after_max_election()).await;
+
+        // Should expire immediately when awaited
+        let res_expired =
+            timeout(Duration::from_millis(1), timer.wait_for_timer_and_emit_event()).await;
+        assert!(res_expired.is_ok(), "Timer should have expired");
+
+        // Should reset to election
+        assert_eq!(timer.active_timer.0, TimerType::Election);
+        assert!(timer.active_timer.1.deadline() > Instant::now());
     }
 }
