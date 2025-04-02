@@ -4,23 +4,21 @@ mod tests;
 use std::sync::Arc;
 
 use log::{debug, error, info, warn};
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::broadcast;
 
 use crate::{
     consensus::{
         ConsensusError, ConsensusEvent, LogEntry, NodeCore, NodeState, NodeTimer, TimerType,
     },
-    messaging::{Message, NodeMessenger, NodeReceiver},
+    messaging::{Message, NodeMessenger},
     state_machine::StateMachine,
 };
 
 #[derive(Debug)]
 pub struct NodeServer {
     core: NodeCore,
-    timer: Arc<Mutex<NodeTimer>>,
     pub state_machine: StateMachine,
     messenger: NodeMessenger,
-    receiver: NodeReceiver,
     event_tx: broadcast::Sender<ConsensusEvent>,
 }
 
@@ -30,11 +28,9 @@ impl NodeServer {
         id: u64,
         state_machine: StateMachine,
         messenger: NodeMessenger,
-        receiver: NodeReceiver,
         event_tx: broadcast::Sender<ConsensusEvent>,
-        timer: Arc<Mutex<NodeTimer>>,
     ) -> Self {
-        Self { core: NodeCore::new(id), timer, state_machine, messenger, receiver, event_tx }
+        Self { core: NodeCore::new(id), state_machine, messenger, event_tx }
     }
 }
 
@@ -78,11 +74,6 @@ impl NodeServer {
 
 // RPC methods
 impl NodeServer {
-    /// Receive a message from the network.
-    pub async fn receive_message(&mut self) -> Result<Arc<Message>, ConsensusError> {
-        self.receiver.receive().await.map_err(ConsensusError::Transport)
-    }
-
     /// Broadcast a message to all other nodes.
     async fn broadcast(&self, message: Message) -> Result<(), ConsensusError> {
         self.messenger.broadcast(message).await.map_err(ConsensusError::Transport)
@@ -186,6 +177,7 @@ impl NodeServer {
         &mut self,
         candidate_term: u64,
         candidate_id: u64,
+        timer: &mut NodeTimer,
     ) -> Result<(), ConsensusError> {
         info!(
             "Node {} received VoteRequest from Node {} for Term {}",
@@ -203,7 +195,7 @@ impl NodeServer {
                 candidate_id
             );
             self.core.transition_to_follower(candidate_term);
-            self.timer.lock().await.reset_election_timer();
+            timer.reset_election_timer();
         }
 
         let (vote_granted, term_to_respond) = self.core.decide_vote(candidate_id, candidate_term);
@@ -216,7 +208,7 @@ impl NodeServer {
                 term_to_respond
             );
 
-            self.timer.lock().await.reset_election_timer();
+            timer.reset_election_timer();
         } else {
             info!(
                 "Node {} decided to REJECT vote for Node {} in term {}",
@@ -237,6 +229,7 @@ impl NodeServer {
         leader_id: u64,
         new_entries: &[LogEntry],
         leader_commit_index: u64,
+        timer: &mut NodeTimer,
     ) -> Result<(), ConsensusError> {
         debug!(
             "Node {} received AppendEntries from Leader {} for Term {}",
@@ -259,7 +252,7 @@ impl NodeServer {
 
         // Leader is up to date
         // 2. Reset timer
-        self.timer.lock().await.reset_election_timer();
+        timer.reset_election_timer();
 
         // 3. Transition to follower
         self.core.transition_to_follower(leader_term);
@@ -283,7 +276,7 @@ impl NodeServer {
         self.apply_committed_entries();
 
         // 7. Reset heartbeat timer
-        self.timer.lock().await.reset_heartbeat_timer();
+        timer.reset_heartbeat_timer();
 
         // 8. Send response to leader
         self.send_append_response(leader_id, true, self.current_term()).await
@@ -296,6 +289,7 @@ impl NodeServer {
         term: u64,
         voter_id: u64,
         vote_granted: bool,
+        timer: &mut NodeTimer,
     ) -> Result<(), ConsensusError> {
         info!(
             "Node {} received VoteResponse from Node {} for Term {} (Granted: {})",
@@ -334,7 +328,7 @@ impl NodeServer {
             );
             // Convert to follower and reset election timer
             self.core.transition_to_follower(term);
-            self.timer.lock().await.reset_election_timer();
+            timer.reset_election_timer();
             return Ok(());
         }
 
@@ -367,7 +361,7 @@ impl NodeServer {
                 // Transition to leader
                 self.core.transition_to_leader();
                 // Start heartbeat timer
-                self.timer.lock().await.reset_heartbeat_timer();
+                timer.reset_heartbeat_timer();
 
                 // Signal that the node is now a leader
                 let _ = self.event_tx.send(ConsensusEvent::LeaderElected { leader_id: self.id() });
@@ -394,6 +388,7 @@ impl NodeServer {
         term: u64,
         success: bool,
         from_id: u64,
+        timer: &mut NodeTimer,
     ) -> Result<(), ConsensusError> {
         info!(
             "Node {} (Leader) received AppendResponse from follower {} for term {} (Success: {})",
@@ -422,7 +417,7 @@ impl NodeServer {
             );
             // Convert to follower and reset election timer
             self.core.transition_to_follower(term);
-            self.timer.lock().await.reset_election_timer();
+            timer.reset_election_timer();
             return Ok(());
         }
 
@@ -462,6 +457,7 @@ impl NodeServer {
     pub async fn handle_timer_event(
         &mut self,
         timer_type: TimerType,
+        timer: &mut NodeTimer,
     ) -> Result<(), ConsensusError> {
         match timer_type {
             TimerType::Election =>
@@ -472,7 +468,7 @@ impl NodeServer {
                         "Node {} received election timer event but is already a Leader. Ignoring.",
                         self.id()
                     );
-                    self.timer.lock().await.reset_heartbeat_timer();
+                    timer.reset_heartbeat_timer();
                 },
             TimerType::Heartbeat =>
                 if self.state() == NodeState::Leader {
@@ -483,7 +479,7 @@ impl NodeServer {
                         self.id()
                     );
 
-                    self.timer.lock().await.reset_election_timer();
+                    timer.reset_election_timer();
                 },
         }
         Ok(())
@@ -491,19 +487,24 @@ impl NodeServer {
 
     /// Receives and processes a single message or timer event.
     /// Returns Ok(()) if processed successfully, Err on error.
-    pub async fn process_message(&mut self, msg: Arc<Message>) -> Result<(), ConsensusError> {
+    pub async fn process_message(
+        &mut self,
+        msg: Arc<Message>,
+        timer: &mut NodeTimer,
+    ) -> Result<(), ConsensusError> {
         match *msg {
             Message::VoteRequest { term, candidate_id } => {
-                self.handle_request_vote(term, candidate_id).await?;
+                self.handle_request_vote(term, candidate_id, timer).await?;
             }
             Message::VoteResponse { term, vote_granted, from_id } => {
-                self.handle_vote_response(term, from_id, vote_granted).await?;
+                self.handle_vote_response(term, from_id, vote_granted, timer).await?;
             }
             Message::AppendEntries { term, leader_id, ref new_entries, commit_index } => {
-                self.handle_append_entries(term, leader_id, new_entries, commit_index).await?;
+                self.handle_append_entries(term, leader_id, new_entries, commit_index, timer)
+                    .await?;
             }
             Message::AppendResponse { term, success, from_id } => {
-                self.handle_append_response(term, success, from_id).await?;
+                self.handle_append_response(term, success, from_id, timer).await?;
             }
             Message::StartElectionCmd => {
                 info!("Node {} received StartElectionCmd", self.id());

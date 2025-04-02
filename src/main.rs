@@ -73,7 +73,7 @@ async fn main() -> Result<(), ConsensusError> {
 
     for id in 0..node_count {
         // Create a new node messenger and receiver
-        let (node_messenger, node_receiver) = NodeMessenger::new(id, network.clone());
+        let (node_messenger, mut node_receiver) = NodeMessenger::new(id, network.clone());
 
         // Add sender to the network
         network.lock().await.add_node(id, node_messenger.sender.clone());
@@ -81,17 +81,12 @@ async fn main() -> Result<(), ConsensusError> {
         // Add messenger to the nodes messengers map (to send commands)
         nodes_messengers.insert(id, node_messenger.clone());
 
-        let timer = Arc::new(Mutex::new(NodeTimer::new()));
+        // Create a new timer
+        let mut timer = NodeTimer::new();
 
         // Create a new node
-        let node_server = NodeServer::new(
-            id,
-            StateMachine::new(),
-            node_messenger,
-            node_receiver,
-            event_tx.clone(),
-            timer.clone(),
-        );
+        let node_server =
+            NodeServer::new(id, StateMachine::new(), node_messenger, event_tx.clone());
         let node_server_arc = Arc::new(Mutex::new(node_server));
         // Store the node in the nodes map
         nodes.insert(id, node_server_arc.clone());
@@ -109,12 +104,12 @@ async fn main() -> Result<(), ConsensusError> {
                 // let msg = node_locked.receive_message().await;
 
                 tokio::select! {
-                  msg = node_locked.receive_message() => {
+                  msg = node_receiver.receive() => {
                     match msg {
                       Ok(msg) => {
                         debug!("Simulation: Node {} received message: {:?}", node_server_id, msg.clone());
                         // Process message
-                        let step_result = node_locked.process_message(msg.clone()).await;
+                        let step_result = node_locked.process_message(msg.clone(), &mut timer).await;
 
                         match step_result {
                           Ok(()) => {
@@ -139,14 +134,11 @@ async fn main() -> Result<(), ConsensusError> {
                   }
 
                   // Wrap lock acquisition and await in an async block
-                  timer_event = async {
-                      let mut guard = timer.lock().await;
-                      guard.wait_for_timer_and_emit_event().await
-                  } => {
+                  timer_event = timer.wait_for_timer_and_emit_event() => {
                     debug!("Simulation: Node {} timer event triggered: {:?}", node_server_id, timer_event);
 
                     // This still requires the NodeServer lock
-                    let result = node_locked.handle_timer_event(timer_event).await;
+                    let result = node_locked.handle_timer_event(timer_event, &mut timer).await;
 
                     if let Err(e) = result {
                       error!(
