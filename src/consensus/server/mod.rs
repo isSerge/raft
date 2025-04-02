@@ -4,7 +4,7 @@ mod tests;
 use std::sync::Arc;
 
 use log::{debug, error, info, warn};
-use tokio::sync::broadcast;
+use tokio::sync::{Mutex, broadcast};
 
 use crate::{
     consensus::{
@@ -17,7 +17,7 @@ use crate::{
 #[derive(Debug)]
 pub struct NodeServer {
     core: NodeCore,
-    timer: NodeTimer,
+    timer: Arc<Mutex<NodeTimer>>,
     pub state_machine: StateMachine,
     messenger: NodeMessenger,
     receiver: NodeReceiver,
@@ -32,15 +32,9 @@ impl NodeServer {
         messenger: NodeMessenger,
         receiver: NodeReceiver,
         event_tx: broadcast::Sender<ConsensusEvent>,
+        timer: Arc<Mutex<NodeTimer>>,
     ) -> Self {
-        Self {
-            core: NodeCore::new(id),
-            timer: NodeTimer::new(),
-            state_machine,
-            messenger,
-            receiver,
-            event_tx,
-        }
+        Self { core: NodeCore::new(id), timer, state_machine, messenger, receiver, event_tx }
     }
 }
 
@@ -209,7 +203,7 @@ impl NodeServer {
                 candidate_id
             );
             self.core.transition_to_follower(candidate_term);
-            self.timer.reset_election_timer();
+            self.timer.lock().await.reset_election_timer();
         }
 
         let (vote_granted, term_to_respond) = self.core.decide_vote(candidate_id, candidate_term);
@@ -222,7 +216,7 @@ impl NodeServer {
                 term_to_respond
             );
 
-            self.timer.reset_election_timer();
+            self.timer.lock().await.reset_election_timer();
         } else {
             info!(
                 "Node {} decided to REJECT vote for Node {} in term {}",
@@ -265,7 +259,7 @@ impl NodeServer {
 
         // Leader is up to date
         // 2. Reset timer
-        self.timer.reset_election_timer();
+        self.timer.lock().await.reset_election_timer();
 
         // 3. Transition to follower
         self.core.transition_to_follower(leader_term);
@@ -289,7 +283,7 @@ impl NodeServer {
         self.apply_committed_entries();
 
         // 7. Reset heartbeat timer
-        self.timer.reset_heartbeat_timer();
+        self.timer.lock().await.reset_heartbeat_timer();
 
         // 8. Send response to leader
         self.send_append_response(leader_id, true, self.current_term()).await
@@ -340,7 +334,7 @@ impl NodeServer {
             );
             // Convert to follower and reset election timer
             self.core.transition_to_follower(term);
-            self.timer.reset_election_timer();
+            self.timer.lock().await.reset_election_timer();
             return Ok(());
         }
 
@@ -373,7 +367,7 @@ impl NodeServer {
                 // Transition to leader
                 self.core.transition_to_leader();
                 // Start heartbeat timer
-                self.timer.reset_heartbeat_timer();
+                self.timer.lock().await.reset_heartbeat_timer();
 
                 // Signal that the node is now a leader
                 let _ = self.event_tx.send(ConsensusEvent::LeaderElected { leader_id: self.id() });
@@ -428,7 +422,7 @@ impl NodeServer {
             );
             // Convert to follower and reset election timer
             self.core.transition_to_follower(term);
-            self.timer.reset_election_timer();
+            self.timer.lock().await.reset_election_timer();
             return Ok(());
         }
 
@@ -465,7 +459,10 @@ impl NodeServer {
     }
 
     /// Handle a timer event (election or heartbeat timeout).
-    async fn handle_timer_event(&mut self, timer_type: TimerType) -> Result<(), ConsensusError> {
+    pub async fn handle_timer_event(
+        &mut self,
+        timer_type: TimerType,
+    ) -> Result<(), ConsensusError> {
         match timer_type {
             TimerType::Election =>
                 if self.state() != NodeState::Leader {
@@ -475,7 +472,7 @@ impl NodeServer {
                         "Node {} received election timer event but is already a Leader. Ignoring.",
                         self.id()
                     );
-                    self.timer.reset_heartbeat_timer();
+                    self.timer.lock().await.reset_heartbeat_timer();
                 },
             TimerType::Heartbeat =>
                 if self.state() == NodeState::Leader {
@@ -486,7 +483,7 @@ impl NodeServer {
                         self.id()
                     );
 
-                    self.timer.reset_election_timer();
+                    self.timer.lock().await.reset_election_timer();
                 },
         }
         Ok(())

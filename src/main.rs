@@ -7,7 +7,7 @@ mod state_machine;
 mod utils;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use consensus::{ConsensusError, ConsensusEvent, NodeServer};
+use consensus::{ConsensusError, ConsensusEvent, NodeServer, NodeTimer};
 use log::{debug, error, info};
 use messaging::{Message, Network, NodeMessenger};
 use state_machine::StateMachine;
@@ -81,6 +81,8 @@ async fn main() -> Result<(), ConsensusError> {
         // Add messenger to the nodes messengers map (to send commands)
         nodes_messengers.insert(id, node_messenger.clone());
 
+        let timer = Arc::new(Mutex::new(NodeTimer::new()));
+
         // Create a new node
         let node_server = NodeServer::new(
             id,
@@ -88,6 +90,7 @@ async fn main() -> Result<(), ConsensusError> {
             node_messenger,
             node_receiver,
             event_tx.clone(),
+            timer.clone(),
         );
         let node_server_arc = Arc::new(Mutex::new(node_server));
         // Store the node in the nodes map
@@ -101,34 +104,67 @@ async fn main() -> Result<(), ConsensusError> {
             info!("Simulation: Start processing messages for node {}", node_server_id);
 
             loop {
-                let msg = {
-                    let mut node_locked = node_server_arc.lock().await;
-                    node_locked.receive_message().await.unwrap()
-                };
-
                 // Acquire lock for processing single message
                 let mut node_locked = node_server_arc.lock().await;
+                // let msg = node_locked.receive_message().await;
 
-                // Process message
-                let step_result = node_locked.process_message(msg).await;
+                tokio::select! {
+                  msg = node_locked.receive_message() => {
+                    match msg {
+                      Ok(msg) => {
+                        debug!("Simulation: Node {} received message: {:?}", node_server_id, msg.clone());
+                        // Process message
+                        let step_result = node_locked.process_message(msg.clone()).await;
 
-                match step_result {
-                    Ok(()) => {
-                        debug!("Simulation: Node {} finished step successfully.", node_server_id);
-                    }
-                    Err(e) => {
+                        match step_result {
+                          Ok(()) => {
+                            debug!("Simulation: Node {} finished step successfully.", node_server_id);
+                          }
+                          Err(e) => {
+                            error!(
+                              "!!! Simulation: Error processing message {:?} for node {}: {:?}",
+                              msg, node_server_id, e
+                            );
+                          }
+                        }
+                      }
+                      Err(e) => {
                         error!(
-                            "!!! Simulation: Node {} task STOPPING NORMALLY: {:?}",
+                            "!!! Simulation: Error receiving message for node {}: {:?}",
                             node_server_id, e
                         );
                         break;
+                      }
                     }
+                  }
+
+                  // Wrap lock acquisition and await in an async block
+                  timer_event = async {
+                      let mut guard = timer.lock().await;
+                      guard.wait_for_timer_and_emit_event().await
+                  } => {
+                    debug!("Simulation: Node {} timer event triggered: {:?}", node_server_id, timer_event);
+
+                    // This still requires the NodeServer lock
+                    let result = node_locked.handle_timer_event(timer_event).await;
+
+                    if let Err(e) = result {
+                      error!(
+                        "!!! Simulation: Error handling timer event for node {}: {:?}",
+                        node_server_id, e
+                      );
+                      break;
+                    }
+                  }
                 }
 
+                drop(node_locked);
                 tokio::task::yield_now().await;
             }
         });
     }
+
+    drop(event_tx);
 
     info!("Simulation: Nodes initialized, tasks spawned");
 
