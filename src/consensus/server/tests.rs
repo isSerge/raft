@@ -135,6 +135,8 @@ async fn test_node_broadcast_append_entries_sends_message_to_all_nodes() {
             assert_eq!(leader_id, NODE_ID);
             assert_eq!(entries, &[log_entry]);
             assert_eq!(prev_log_index, 1);
+            assert_eq!(prev_log_term, TERM);
+            assert_eq!(leader_commit, 0);
         } else {
             panic!("Expected an AppendEntries message");
         }
@@ -893,6 +895,8 @@ async fn test_node_start_append_entries_sends_append_entries_to_all_nodes() {
             assert_eq!(entries[0].term, 1);
             assert_eq!(entries[0].command, COMMAND);
             assert_eq!(leader_commit, 0); // should not change, updated after majority of responses
+            assert_eq!(prev_log_index, 1);
+            assert_eq!(prev_log_term, 1);
         } else {
             panic!("Expected an AppendEntries message");
         }
@@ -1026,6 +1030,8 @@ async fn test_node_process_message_vote_response() {
         assert_eq!(leader_id, node_candidate.id());
         assert!(entries.is_empty(), "Expected empty entries in the heartbeat AppendEntries");
         assert_eq!(leader_commit, 0);
+        assert_eq!(prev_log_index, 0);
+        assert_eq!(prev_log_term, 0);
     } else {
         panic!("Expected an AppendEntries message after majority vote");
     }
@@ -1151,6 +1157,8 @@ async fn test_node_process_message_start_election_cmd_not_leader() {
     if let Message::VoteRequest { term, candidate_id, last_log_index, last_log_term } = *vote_req {
         assert_eq!(term, node_candidate.current_term());
         assert_eq!(candidate_id, node_candidate.id());
+        assert_eq!(last_log_index, node_candidate.log_last_index());
+        assert_eq!(last_log_term, node_candidate.log_last_term());
     } else {
         panic!("Expected a VoteRequest message");
     }
@@ -1217,6 +1225,8 @@ async fn test_node_process_message_start_append_entries_cmd_as_leader() {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, cmd);
         assert_eq!(leader_commit, 0);
+        assert_eq!(prev_log_index, 1);
+        assert_eq!(prev_log_term, 1);
     } else {
         panic!("Expected an AppendEntries message");
     }
