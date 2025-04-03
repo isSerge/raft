@@ -117,4 +117,10 @@ impl NodeMessenger {
             Err(MessagingError::BroadcastError)
         }
     }
+
+    /// Returns a slice of all peer IDs in the network.
+    pub async fn get_peer_ids(&self) -> Result<Vec<u64>, MessagingError> {
+        let network = self.network.lock().await;
+        Ok(network.get_all_node_ids())
+    }
 }
