@@ -52,6 +52,7 @@ impl NodeServer {
     }
 
     /// Get the node that this node voted for.
+    #[cfg(test)]
     pub fn voted_for(&self) -> Option<u64> {
         self.core.voted_for()
     }
