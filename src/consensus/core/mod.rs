@@ -44,6 +44,8 @@ pub struct NodeCore {
     // Leader only
     /// The next index of the node for each node.
     next_index: HashMap<u64, u64>,
+    /// The match index of the node for each node.
+    match_index: HashMap<u64, u64>,
 }
 
 // Constructors
@@ -51,6 +53,8 @@ impl NodeCore {
     pub fn new(id: u64) -> Self {
         Self { id, ..Default::default() }
     }
+
+    // TODO: add constructors for testing with initial state
 }
 
 // Getters
@@ -90,6 +94,16 @@ impl NodeCore {
     /// Get the last index of the log (1-based).
     pub fn log_last_index(&self) -> u64 {
         self.log.len() as u64
+    }
+
+    /// Get the next index for a node.
+    pub fn next_index_for(&self, follower_id: u64) -> Option<u64> {
+        self.next_index.get(&follower_id).copied()
+    }
+
+    /// Get the match index for a node.
+    pub fn match_index_for(&self, follower_id: u64) -> Option<u64> {
+        self.match_index.get(&follower_id).copied()
     }
 }
 
@@ -164,7 +178,7 @@ impl NodeCore {
     }
 
     /// Transition to a leader.
-    pub fn transition_to_leader(&mut self) {
+    pub fn transition_to_leader(&mut self, peer_ids: &[u64]) {
         if self.state() != NodeState::Candidate {
             warn!(
                 "Node {} attempted to transition to leader state but is not a candidate",
@@ -177,7 +191,7 @@ impl NodeCore {
         self.state = NodeState::Leader;
         self.votes_received = 0; // reset votes
 
-        // TODO: initialize Leader only state
+        self.initialize_leader_state(peer_ids);
     }
 
     /// Update the commit index.
@@ -207,6 +221,27 @@ impl NodeCore {
         }
     }
 
+    fn initialize_leader_state(&mut self, peer_ids: &[u64]) {
+        self.next_index.clear();
+        self.match_index.clear();
+        let last_log_index = self.log_last_index();
+
+        for peer_id in peer_ids {
+            if *peer_id == self.id {
+                continue;
+            }
+
+            // + 1 because Raft uses 1-based indexing
+            self.next_index.insert(*peer_id, last_log_index + 1);
+            self.match_index.insert(*peer_id, 0);
+        }
+
+        info!(
+            "Node {} initialized leader state with next_index: {:?}, match_index: {:?}",
+            self.id, self.next_index, self.match_index
+        );
+    }
+
     /// Append a new entry to the leader's log.
     pub fn leader_append_entry(&mut self, command: String) -> bool {
         if self.state != NodeState::Leader {
@@ -219,56 +254,50 @@ impl NodeCore {
         true
     }
 
-    /// Update the commit index of the leader.
-    pub fn leader_update_commit_index(
+    /// Update the match index of the leader.
+    pub fn leader_update_match_index(
         &mut self,
         from_id: u64,
-        success: bool,
-        __total_nodes: u64,
-    ) -> Option<(u64, u64)> {
+        // success: bool,
+        // total_nodes: u64,
+        // Index of the last entry appended to the follower's log
+        follower_last_append_index: u64,
+    ) {
         if self.state != NodeState::Leader {
-            warn!("Node {} tried to update commit index but is not a Leader", self.id);
-            return None;
+            warn!("Node {} tried to update match index but is not a Leader", self.id);
+            return;
         }
 
-        if success {
-            let potential_commit_index = self.log_last_index(); // Commit everything in log
+        // Update match index
+        let current_match_index = self.match_index.entry(from_id).or_insert(0);
 
-            if potential_commit_index > self.commit_index {
-                let old_commit = self.commit_index;
-                info!(
-                    "Node {} (Leader) OPTIMISTICALLY advancing commit index from {} to {} after \
-                     success from {}",
-                    self.id, old_commit, potential_commit_index, from_id
-                );
-                self.commit_index = potential_commit_index;
-                return Some((old_commit, self.commit_index)); // Indicate change
-            } else {
-                debug!(
-                    "Node {} (Leader) commit index ({}) already >= log length ({}), no change.",
-                    self.id, self.commit_index, potential_commit_index
-                );
-            }
-        } else {
-            // Append failed on follower
-            warn!(
-                "Node {} (Leader): Follower {} failed AppendEntries (nextIndex handling TBD)",
-                self.id, from_id
+        if follower_last_append_index > *current_match_index {
+            *current_match_index = follower_last_append_index;
+
+            debug!(
+                "Node {} (Leader) updated match_index for {} from {} to {}",
+                self.id, from_id, *current_match_index, follower_last_append_index
             );
-            // Still attempt basic nextIndex decrement (placeholder)
-            if let Some(idx) = self.next_index.get_mut(&from_id) {
-                if *idx > 1 {
-                    *idx -= 1;
-                    info!(
-                        "Node {} (Leader) decremented next_index for {} to {}",
-                        self.id, from_id, *idx
-                    );
-                    // TODO: Need mechanism to trigger resend
-                }
-            }
-        }
 
-        None // Commit index did not change (or failure occurred)
+            // TODO: recalculate leader's commit index
+        }
+    }
+
+    // TODO: implement this
+    pub fn leader_update_commit_index(&mut self, from_id: u64) -> Option<(u64, u64)> {
+        let potential_commit_index = self.log_last_index();
+
+        if potential_commit_index > self.commit_index() {
+            let old_commit = self.commit_index();
+            info!(
+                "Node {} (Leader) updated commit_index from {} to {} (from {})",
+                self.id, old_commit, potential_commit_index, from_id
+            );
+            self.commit_index = potential_commit_index;
+            Some((old_commit, self.commit_index()))
+        } else {
+            None
+        }
     }
 
     /// Check if the log is consistent with another log.

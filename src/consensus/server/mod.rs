@@ -71,6 +71,12 @@ impl NodeServer {
     pub fn last_applied(&self) -> u64 {
         self.core.last_applied()
     }
+
+    /// Get the match index for a peer.
+    #[cfg(test)]
+    pub fn match_index_for(&self, peer_id: u64) -> Option<u64> {
+        self.core.match_index_for(peer_id)
+    }
 }
 
 // RPC methods
@@ -86,8 +92,12 @@ impl NodeServer {
         leader_id: u64,
         success: bool,
         term: u64,
+        last_appended_index: Option<u64>,
     ) -> Result<(), ConsensusError> {
-        let msg = Message::AppendResponse { term, success, from_id: self.id() };
+        // If append failed, don't send last_appended_index
+        let last_appended_index = if success { last_appended_index } else { None };
+        let msg =
+            Message::AppendResponse { term, success, from_id: self.id(), last_appended_index };
         info!("Node {} sending AppendResponse to leader {}: {:?}", self.id(), leader_id, msg);
         self.messenger.send_to(leader_id, Arc::new(msg)).await.map_err(ConsensusError::Transport)
     }
@@ -248,7 +258,7 @@ impl NodeServer {
                 leader_term,
                 self.current_term()
             );
-            return self.send_append_response(leader_id, false, self.current_term()).await;
+            return self.send_append_response(leader_id, false, self.current_term(), None).await;
         }
 
         // Leader is up to date
@@ -259,7 +269,14 @@ impl NodeServer {
         self.core.transition_to_follower(leader_term);
 
         // 4. Check log consistency and append log entries to own log
-        let (is_log_consistent, _log_modified) = self.core.follower_append_entries(new_entries);
+        let initial_log_length = self.log().len();
+        let (is_log_consistent, log_modified) = self.core.follower_append_entries(new_entries);
+        let last_appended_index = if log_modified {
+            Some(self.log().len() as u64)
+        } else {
+            // If log was not modified, send back the last log index
+            Some(initial_log_length as u64)
+        };
 
         if !is_log_consistent {
             warn!(
@@ -267,7 +284,7 @@ impl NodeServer {
                 self.id(),
                 leader_id
             );
-            return self.send_append_response(leader_id, false, self.current_term()).await;
+            return self.send_append_response(leader_id, false, self.current_term(), None).await;
         }
 
         // 5. Update commit_index
@@ -280,7 +297,7 @@ impl NodeServer {
         timer.reset_heartbeat_timer();
 
         // 8. Send response to leader
-        self.send_append_response(leader_id, true, self.current_term()).await
+        self.send_append_response(leader_id, true, self.current_term(), last_appended_index).await
     }
 
     /// Handle a vote response from a voter. Used by candidates to collect
@@ -360,7 +377,8 @@ impl NodeServer {
                 );
 
                 // Transition to leader
-                self.core.transition_to_leader();
+                let peer_ids = self.messenger.get_peer_ids().await?;
+                self.core.transition_to_leader(&peer_ids);
                 // Start heartbeat timer
                 timer.reset_heartbeat_timer();
 
@@ -388,15 +406,18 @@ impl NodeServer {
         &mut self,
         term: u64,
         success: bool,
+        follower_last_appended_index: Option<u64>,
         from_id: u64,
         timer: &mut NodeTimer,
     ) -> Result<(), ConsensusError> {
         info!(
-            "Node {} (Leader) received AppendResponse from follower {} for term {} (Success: {})",
+            "Node {} (Leader) received AppendResponse from follower {} for term {} (Success: {}, \
+             last_appended_index: {:?})",
             self.id(),
             from_id,
             term,
-            success
+            success,
+            follower_last_appended_index
         );
 
         // 1. Perform checks
@@ -433,14 +454,37 @@ impl NodeServer {
             return Ok(());
         }
 
-        // 2. Delegate commit index update logic to core
-        let total_nodes = self.messenger.get_nodes_count().await.unwrap_or(1);
-        let commit_result =
-            self.core.leader_update_commit_index(from_id, success, total_nodes as u64);
+        // 2. Update match index and next index
+        if success {
+            if let Some(last_appended_index) = follower_last_appended_index {
+                self.core.leader_update_match_index(from_id, last_appended_index);
 
-        // If commit index advanced, apply to *leader's* state machine
-        if let Some((_old_ci, _new_ci)) = commit_result {
-            self.apply_committed_entries();
+                if self.core.leader_update_commit_index(from_id).is_some() {
+                    // If commit index advanced, apply to *leader's* state machine
+                    self.apply_committed_entries();
+                }
+            } else {
+                warn!(
+                    "Node {} (Leader) received AppendResponse from Node {} for term {} (Success: \
+                     {}, last_appended_index: {:?})",
+                    self.id(),
+                    from_id,
+                    term,
+                    success,
+                    follower_last_appended_index
+                );
+            }
+        } else {
+            // TODO: handle failed append
+            warn!(
+                "Node {} (Leader) received AppendResponse from Node {} for term {} (Success: {}, \
+                 last_appended_index: {:?})",
+                self.id(),
+                from_id,
+                term,
+                success,
+                follower_last_appended_index
+            );
         }
 
         // TODO: Trigger resend if success was false and next_index was decremented
@@ -504,8 +548,9 @@ impl NodeServer {
                 self.handle_append_entries(term, leader_id, new_entries, commit_index, timer)
                     .await?;
             }
-            Message::AppendResponse { term, success, from_id } => {
-                self.handle_append_response(term, success, from_id, timer).await?;
+            Message::AppendResponse { term, success, from_id, last_appended_index } => {
+                self.handle_append_response(term, success, last_appended_index, from_id, timer)
+                    .await?;
             }
             Message::StartElectionCmd => {
                 info!("Node {} received StartElectionCmd", self.id());

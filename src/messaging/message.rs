@@ -11,7 +11,7 @@ pub enum Message {
     /// Request to append entries to other nodes
     AppendEntries { term: u64, leader_id: u64, new_entries: Vec<LogEntry>, commit_index: u64 },
     /// Response to append request
-    AppendResponse { term: u64, success: bool, from_id: u64 },
+    AppendResponse { term: u64, success: bool, from_id: u64, last_appended_index: Option<u64> },
 
     // Commands
     /// Command to start an election
