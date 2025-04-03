@@ -168,6 +168,8 @@ async fn test_node_broadcast_vote_request_sends_message_to_all_nodes() {
         {
             assert_eq!(term, TERM);
             assert_eq!(candidate_id, NODE_ID_1);
+            assert_eq!(last_log_index, 0);
+            assert_eq!(last_log_term, 0);
         } else {
             panic!("Expected a VoteRequest message");
         }

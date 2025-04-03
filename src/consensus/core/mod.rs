@@ -71,6 +71,7 @@ impl NodeCore {
         self.current_term
     }
 
+    #[cfg(test)]
     pub fn voted_for(&self) -> Option<u64> {
         self.voted_for
     }
