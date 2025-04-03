@@ -105,11 +105,11 @@ async fn test_node_broadcast_append_entries_sends_message_to_all_nodes() {
     let mut nodes = create_network(2).await;
 
     // get the nodes
-    let (node_leader, _, _, follower_receiver) = get_two_nodes(&mut nodes);
+    let (node_leader, _, node_follower, follower_receiver) = get_two_nodes(&mut nodes);
 
     // transition node 1 to leader
     node_leader.core.transition_to_candidate(); // sets term to 1
-    node_leader.core.transition_to_leader(); // does not change term, still 1
+    node_leader.core.transition_to_leader(&[NODE_ID, node_follower.id()]); // does not change term, still 1
 
     // broadcast append entries
     let log_entry = LogEntry::new(TERM, "test".to_string());
@@ -176,7 +176,7 @@ async fn test_node_send_append_response() {
 
     // transition node 1 to leader
     node_leader.core.transition_to_candidate(); // sets term to 1
-    node_leader.core.transition_to_leader(); // does not change term, still 1
+    node_leader.core.transition_to_leader(&[node_leader.id(), node_follower.id()]); // does not change term, still 1
 
     // broadcast append entries
     let log_entry = LogEntry::new(TERM, "test".to_string());
@@ -210,10 +210,11 @@ async fn test_node_send_append_response() {
     let response_message = receive_message(leader_receiver).await;
 
     if let Ok(msg_arc) = response_message {
-        if let Message::AppendResponse { term, success, from_id } = *msg_arc {
+        if let Message::AppendResponse { term, success, from_id, last_appended_index } = *msg_arc {
             assert_eq!(term, TERM);
             assert!(success);
             assert_eq!(from_id, NODE_ID_2);
+            assert_eq!(last_appended_index, Some(1));
         } else {
             panic!("Expected an AppendResponse message");
         }
@@ -538,7 +539,7 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
 
     // transition node 1 to leader
     node_leader.core.transition_to_candidate(); // sets term to 1
-    node_leader.core.transition_to_leader(); // does not change term, still 1
+    node_leader.core.transition_to_leader(&[node_leader.id(), node_follower.id()]); // does not change term, still 1
 
     // set lower term on node 2
     node_follower.core.transition_to_follower(NODE_2_TERM);
@@ -568,10 +569,13 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
             // check that the append response is a rejection
             let response_message = receive_message(leader_receiver).await;
             if let Ok(msg_arc) = response_message {
-                if let Message::AppendResponse { term, success, from_id } = *msg_arc {
+                if let Message::AppendResponse { term, success, from_id, last_appended_index } =
+                    *msg_arc
+                {
                     assert_eq!(term, NODE_2_TERM);
                     assert!(!success);
                     assert_eq!(from_id, NODE_ID_2);
+                    assert_eq!(last_appended_index, None);
                 } else {
                     panic!("Expected an AppendResponse message");
                 }
@@ -584,8 +588,6 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
     }
 }
 
-// TODO: fix or deletethis test, currently fails because transition_to_leader()
-// is not updating term anymore
 #[tokio::test]
 async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
     const NODE_ID_2: u64 = 1;
@@ -599,7 +601,7 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
     node_leader.core.transition_to_candidate(); // sets term to 1, votes for self
 
     // transition node 1 to leader
-    node_leader.core.transition_to_leader(); // does not change term, still 1
+    node_leader.core.transition_to_leader(&[node_leader.id(), node_follower.id()]); // does not change term, still 1
 
     // set lower term on node 2
     node_follower.core.transition_to_follower(0); // sets node 2 term to lower than node 1
@@ -629,10 +631,13 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
             // check that the append response is a rejection
             let response_message = receive_message(leader_receiver).await;
             if let Ok(msg_arc) = response_message {
-                if let Message::AppendResponse { term, success, from_id } = *msg_arc {
+                if let Message::AppendResponse { term, success, from_id, last_appended_index } =
+                    *msg_arc
+                {
                     assert_eq!(term, 1);
                     assert!(success);
                     assert_eq!(from_id, NODE_ID_2);
+                    assert_eq!(last_appended_index, Some(1));
                 } else {
                     panic!("Expected an AppendResponse message");
                 }
@@ -657,7 +662,7 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
 
     // transition node 1 to leader
     node_leader.core.transition_to_candidate(); // sets term to 1
-    node_leader.core.transition_to_leader(); // does not change term, still 1
+    node_leader.core.transition_to_leader(&[node_leader.id(), node_follower.id()]); // does not change term, still 1
 
     // set lower term on node 2
     node_follower.core.transition_to_follower(NODE_TERM);
@@ -687,10 +692,13 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
             // check that the append response is a rejection
             let response_message = receive_message(leader_receiver).await;
             if let Ok(msg_arc) = response_message {
-                if let Message::AppendResponse { term, success, from_id } = *msg_arc {
+                if let Message::AppendResponse { term, success, from_id, last_appended_index } =
+                    *msg_arc
+                {
                     assert_eq!(term, NODE_TERM);
                     assert!(success);
                     assert_eq!(from_id, NODE_ID_2);
+                    assert_eq!(last_appended_index, Some(1));
                 } else {
                     panic!("Expected an AppendResponse message");
                 }
@@ -714,7 +722,7 @@ async fn test_node_start_append_entries_updates_log() {
     node.core.transition_to_candidate(); // sets term to 1, votes for self
 
     // transition to leader
-    node.core.transition_to_leader(); // does not change term, still 1
+    node.core.transition_to_leader(&[NODE_ID]); // does not change term, still 1
 
     // check default values
     assert_eq!(node.state(), NodeState::Leader);
@@ -753,13 +761,13 @@ async fn test_node_start_append_entries_sends_append_entries_to_all_nodes() {
     const NODE_ID: u64 = 0;
     const COMMAND: &str = "test command";
     let mut nodes = create_network(2).await;
-    let (node_leader, _, _, follower_receiver) = get_two_nodes(&mut nodes);
+    let (node_leader, _, node_follower, follower_receiver) = get_two_nodes(&mut nodes);
 
     // start as follower, transition to candidate
     node_leader.core.transition_to_candidate(); // sets term to 1, votes for self
 
     // transition node 1 to leader
-    node_leader.core.transition_to_leader(); // does not change term, still 1
+    node_leader.core.transition_to_leader(&[node_leader.id(), node_follower.id()]); // does not change term, still 1
 
     // append to log and broadcast
     node_leader.start_append_entries(COMMAND.to_string()).await.unwrap();
@@ -824,10 +832,11 @@ async fn test_node_process_message_handles_append_entries() {
     let response = receive_message(leader_receiver)
         .await
         .expect("Expected AppendResponse from process_message");
-    if let Message::AppendResponse { term, success, from_id } = *response {
+    if let Message::AppendResponse { term, success, from_id, last_appended_index } = *response {
         assert_eq!(term, 1);
         assert!(success, "Expected AppendResponse to succeed");
         assert_eq!(from_id, node_follower.id());
+        assert_eq!(last_appended_index, Some(1));
     } else {
         panic!("Expected an AppendResponse message");
     }
@@ -925,7 +934,11 @@ async fn test_node_process_message_append_response() {
 
     // Prepare: transition leader to candidate then leader.
     node_leader.core.transition_to_candidate();
-    node_leader.core.transition_to_leader();
+    node_leader.core.transition_to_leader(&[
+        node_leader.id(),
+        node_follower1.id(),
+        node_follower2.id(),
+    ]);
 
     // Leader starts an AppendEntries command (appending a new log entry).
     node_leader.start_append_entries("update".to_string()).await.unwrap();
@@ -1005,7 +1018,7 @@ async fn test_node_process_message_start_election_cmd_already_leader() {
 
     // Transition the node to Leader.
     node.core.transition_to_candidate();
-    node.core.transition_to_leader();
+    node.core.transition_to_leader(&[node.id()]);
 
     // Process a StartElectionCmd message.
     node.process_message(std::sync::Arc::new(Message::StartElectionCmd), &mut create_timer())
@@ -1022,11 +1035,11 @@ async fn test_node_process_message_start_election_cmd_already_leader() {
 #[tokio::test]
 async fn test_node_process_message_start_append_entries_cmd_as_leader() {
     let mut nodes = create_network(2).await;
-    let (node_leader, _, _, follower_receiver) = get_two_nodes(&mut nodes);
+    let (node_leader, _, node_follower, follower_receiver) = get_two_nodes(&mut nodes);
 
     // Prepare: transition the node to Candidate then Leader.
     node_leader.core.transition_to_candidate();
-    node_leader.core.transition_to_leader();
+    node_leader.core.transition_to_leader(&[node_leader.id(), node_follower.id()]);
 
     // Process a StartAppendEntriesCmd message with a command.
     let cmd = "test cmd".to_string();
