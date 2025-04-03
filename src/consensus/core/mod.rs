@@ -96,6 +96,12 @@ impl NodeCore {
         self.log.len() as u64
     }
 
+    /// Get the last term of the log.
+    pub fn log_last_term(&self) -> u64 {
+        // Return term 0 if log is empty, consistent with Raft's index 0.
+        self.log.last().map_or(0, |entry| entry.term)
+    }
+
     /// Get the next index for a node.
     pub fn next_index_for(&self, follower_id: u64) -> Option<u64> {
         self.next_index.get(&follower_id).copied()
@@ -125,9 +131,7 @@ impl NodeCore {
                     self.id, applied_index, self.last_applied
                 );
             }
-            Ordering::Equal => {
-                debug!("Node {} last_applied is already {}", self.id, self.last_applied);
-            }
+            Ordering::Equal => {}
         }
     }
 
@@ -249,9 +253,80 @@ impl NodeCore {
             return false;
         }
         let entry = LogEntry::new(self.current_term(), command);
-        info!("Leader Node {} appending new log entry: {:?}", self.id, entry);
+        info!(
+            "Leader Node {} appending new log entry at index {}: {:?}",
+            self.id,
+            self.log_last_index() + 1,
+            entry
+        );
         self.log.push(entry);
         true
+    }
+
+    /// Process the response from a follower after appending entries.
+    /// Returns `(commit_has_advanced, old_commit_index, new_commit_index)`
+    pub fn leader_process_append_response(
+        &mut self,
+        from_id: u64,
+        success: bool,
+        prev_log_index: u64,
+        entries_len: usize,
+    ) -> (bool, u64, u64) {
+        let old_commit_index = self.commit_index();
+
+        if self.state != NodeState::Leader {
+            warn!(
+                "Node {} tried to process append response but is not a Leader. Ignoring.",
+                self.id
+            );
+            return (false, old_commit_index, old_commit_index);
+        }
+
+        if success {
+            let new_match_index = prev_log_index + entries_len as u64;
+            let new_next_index = prev_log_index + 1;
+
+            let current_match_index = self.match_index.entry(from_id).or_insert(0);
+
+            if new_match_index > *current_match_index {
+                *current_match_index = new_match_index;
+
+                debug!(
+                    "Node {} (Leader) updated match_index for {} from {} to {}",
+                    self.id, from_id, *current_match_index, new_match_index
+                );
+            }
+
+            self.next_index.insert(from_id, new_next_index);
+
+            debug!(
+                "Node {} (Leader) updated next_index for {} to {}",
+                self.id, from_id, new_next_index
+            );
+
+            // TODO: update commit index based on majority of match_index
+        } else {
+            // Append failed. Decrement next_index for the follower.
+            let current_next_index = self.next_index.entry(from_id).or_insert(0);
+
+            if *current_next_index > 0 {
+                *current_next_index -= 1;
+                info!(
+                    "Node {} (Leader) decremented next_index for {} to {}",
+                    self.id, from_id, *current_next_index
+                );
+                // TODO: retry sending entries to the follower
+            } else {
+                warn!(
+                    "Node {} (Leader) next_index for {} is 0. Cannot decrement further.",
+                    self.id, from_id
+                );
+            }
+        }
+
+        let commit_has_advanced = self.commit_index() > old_commit_index;
+
+        (commit_has_advanced, old_commit_index, self.commit_index())
     }
 
     /// Update the match index of the leader.
@@ -283,42 +358,77 @@ impl NodeCore {
         }
     }
 
-    // TODO: implement this
+    /// Update the commit index of the leader.
+    // TODO: should calculate based on majority of match_index
     pub fn leader_update_commit_index(&mut self, from_id: u64) -> Option<(u64, u64)> {
         let potential_commit_index = self.log_last_index();
 
         if potential_commit_index > self.commit_index() {
-            let old_commit = self.commit_index();
-            info!(
-                "Node {} (Leader) updated commit_index from {} to {} (from {})",
-                self.id, old_commit, potential_commit_index, from_id
-            );
-            self.commit_index = potential_commit_index;
-            Some((old_commit, self.commit_index()))
+            if let Some(entry_to_commit) = self.log.get((potential_commit_index - 1) as usize) {
+                if entry_to_commit.term == self.current_term() {
+                    let old_commit = self.commit_index();
+                    info!(
+                        "Node {} (Leader) updated commit_index from {} to {} (from {})",
+                        self.id, old_commit, potential_commit_index, from_id
+                    );
+                    self.commit_index = potential_commit_index;
+
+                    Some((old_commit, self.commit_index()))
+                } else {
+                    warn!(
+                        "Node {} (Leader) attempted to update commit_index but found conflicting \
+                         term",
+                        self.id
+                    );
+                    None
+                }
+            } else {
+                warn!(
+                    "Node {} (Leader) attempted to update commit_index but found no matching \
+                     entry to commit",
+                    self.id
+                );
+                None
+            }
         } else {
+            debug!(
+                "Node {} (Leader) commit_index is up to date at {}",
+                self.id,
+                self.commit_index()
+            );
             None
         }
     }
 
     /// Check if the log is consistent with another log.
     // TODO: Implement this.
-    fn check_log_consistency(&self) -> bool {
+    fn check_log_consistency(&self, prev_log_index: u64, prev_log_term: u64) -> bool {
         true
     }
 
     // Handles appending entries received from a leader
     // Returns `(log_consistent_and_appended, log_was_modified)` flags.
-    pub fn follower_append_entries(&mut self, entries: &[LogEntry]) -> (bool, bool) {
+    pub fn follower_append_entries(
+        &mut self,
+        prev_log_index: u64,
+        prev_log_term: u64,
+        entries: &[LogEntry],
+    ) -> (bool, bool) {
         // 1. Perform Log Consistency Check
-        // TODO: Implement real check
-        if !self.check_log_consistency() {
-            warn!("Log consistency check failed (TBD).");
-            return (false, false); // Return false for consistency check failure
+        let log_is_consistent = self.check_log_consistency(prev_log_index, prev_log_term);
+
+        if !log_is_consistent {
+            warn!(
+                "Node {} (Follower) rejected append request (prev_log_index: {}, prev_log_term: \
+                 {})",
+                self.id, prev_log_index, prev_log_term
+            );
+            return (false, false);
         }
 
         // 2. Handle potential conflicts and append new entries
         // TODO: Implement conflict detection and log truncation
-        let log_modified = self.find_conflicts_and_append(entries);
+        let log_modified = self.find_conflicts_and_append(prev_log_index, entries);
 
         // Return true for consistency (as check passed), and whether log was modified
         (true, log_modified)
@@ -326,23 +436,54 @@ impl NodeCore {
 
     /// Finds conflicting entries, appends new entries.
     /// Returns true if the log was modified.
-    fn find_conflicts_and_append(&mut self, entries: &[LogEntry]) -> bool {
-        if entries.is_empty() {
-            debug!("Node {} received heartbeat (no entries to append/check)", self.id());
-            return false;
+    fn find_conflicts_and_append(&mut self, prev_log_index: u64, entries: &[LogEntry]) -> bool {
+        let mut log_modified = false;
+        let mut leader_entry_index = 0;
+        let mut current_raft_index = prev_log_index + 1;
+
+        while leader_entry_index < entries.len() {
+            let leader_entry = &entries[leader_entry_index];
+            let current_vec_index = (current_raft_index - 1) as usize;
+
+            if current_raft_index > self.log_last_index() {
+                self.log.extend_from_slice(&entries[leader_entry_index..]);
+                log_modified = true;
+                break;
+            }
+
+            if let Some(follower_entry) = self.log.get(current_vec_index) {
+                if follower_entry.term != leader_entry.term {
+                    // Conflict detected. Truncate log.
+                    self.log.truncate(current_vec_index);
+                    log_modified = true;
+                } else {
+                    current_raft_index += 1;
+                    leader_entry_index += 1;
+                }
+            } else {
+                error!(
+                    "Node {} logic error: follower index {} is within bounds but follower_entry \
+                     is None",
+                    self.id, current_raft_index
+                );
+                break;
+            }
         }
 
-        // TODO: Implement real conflict detection
-        info!("Node {} appending {} entries (simplistic)", self.id(), entries.len());
-        self.log.extend_from_slice(entries);
-        true
+        log_modified
     }
 
     // Voting methods
     /// Decides whether to grant vote based on RequestVote RPC args.
     /// Updates term and voted_for state internally if appropriate.
     /// Returns `(should_grant_vote, term_to_respond_with)`
-    pub fn decide_vote(&mut self, candidate_id: u64, candidate_term: u64) -> (bool, u64) {
+    pub fn decide_vote(
+        &mut self,
+        candidate_id: u64,
+        candidate_term: u64,
+        candidate_last_log_index: u64,
+        candidate_last_log_term: u64,
+    ) -> (bool, u64) {
         // 1. If candidate_term is older than current_term, reject
         if candidate_term < self.current_term() {
             return (false, self.current_term());
@@ -353,37 +494,43 @@ impl NodeCore {
             self.transition_to_follower(candidate_term);
         }
 
-        // TODO: check candidate log is consistent
+        // 3. Check if already voted in this term (§5.2)
+        let can_vote = match self.voted_for {
+            // Already voted for the requesting candidate: grant again (idempotent)
+            Some(id) if id == candidate_id => true,
+            // Already voted for someone else: reject
+            Some(_) => false,
+            // Haven't voted yet: can potentially vote
+            None => true,
+        };
 
-        // 3. Vote if we haven't voted yet.
-        let (vote_granted, term_to_respond_with) = self.grant_vote_if_possible(candidate_id);
-        if vote_granted {
-            info!(
-                "Node {} voted for candidate {} in term {}",
-                self.id, candidate_id, candidate_term
-            );
-            (true, term_to_respond_with)
-        } else {
+        if !can_vote {
             debug!(
-                "Node {} did not vote for candidate {} in term {}",
+                "Node {} rejecting vote for {} in term {}: already voted for {:?}",
+                self.id,
+                candidate_id,
+                self.current_term(),
+                self.voted_for
+            );
+            return (false, self.current_term());
+        }
+
+        // 4. Check if candidate log is consistent
+        let candidate_log_is_consistent =
+            self.check_log_consistency(candidate_last_log_index, candidate_last_log_term);
+
+        if !candidate_log_is_consistent {
+            debug!(
+                "Node {} rejecting vote for {} in term {}: candidate log is not consistent",
                 self.id, candidate_id, candidate_term
             );
-
-            (false, term_to_respond_with)
+            return (false, self.current_term());
         }
-    }
 
-    /// Record a vote for a candidate if not already voted for someone else.
-    /// Returns `(vote_granted, term_to_respond_with)`
-    fn grant_vote_if_possible(&mut self, candidate_id: u64) -> (bool, u64) {
-        match self.voted_for() {
-            Some(voted_for) => (voted_for == candidate_id, self.current_term()),
-            None => {
-                info!("Node {} voting for candidate {}", self.id, candidate_id);
-                self.voted_for = Some(candidate_id);
-                (true, self.current_term())
-            }
-        }
+        // 5. Grant vote
+        info!("Node {} voting for candidate {} in term {}", self.id, candidate_id, candidate_term);
+        self.voted_for = Some(candidate_id);
+        (true, self.current_term())
     }
 
     /// Record a vote for self during candidate state.

@@ -112,7 +112,9 @@ async fn test_node_broadcast_append_entries_sends_message_to_all_nodes() {
     node_leader.core.transition_to_leader(&[NODE_ID, node_follower.id()]); // does not change term, still 1
 
     // broadcast append entries
-    let log_entry = LogEntry::new(TERM, "test".to_string());
+    let command = "test".to_string();
+    let log_entry = LogEntry::new(TERM, command.clone());
+    node_leader.core.leader_append_entry(command);
     node_leader.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
 
     // node 2 receives append entries from node 1
@@ -120,12 +122,19 @@ async fn test_node_broadcast_append_entries_sends_message_to_all_nodes() {
 
     // check that the message is an append entries request
     if let Ok(msg_arc) = request_message {
-        if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg_arc
+        if let Message::AppendEntries {
+            term,
+            leader_id,
+            ref entries,
+            prev_log_index,
+            prev_log_term,
+            leader_commit,
+        } = *msg_arc
         {
             assert_eq!(term, TERM);
             assert_eq!(leader_id, NODE_ID);
-            assert_eq!(new_entries, &[log_entry]);
-            assert_eq!(commit_index, 0);
+            assert_eq!(entries, &[log_entry]);
+            assert_eq!(prev_log_index, 1);
         } else {
             panic!("Expected an AppendEntries message");
         }
@@ -153,7 +162,8 @@ async fn test_node_broadcast_vote_request_sends_message_to_all_nodes() {
 
     // check that the message is a vote request
     if let Ok(msg_arc) = message {
-        if let Message::VoteRequest { term, candidate_id } = *msg_arc {
+        if let Message::VoteRequest { term, candidate_id, last_log_index, last_log_term } = *msg_arc
+        {
             assert_eq!(term, TERM);
             assert_eq!(candidate_id, NODE_ID_1);
         } else {
@@ -179,7 +189,9 @@ async fn test_node_send_append_response() {
     node_leader.core.transition_to_leader(&[node_leader.id(), node_follower.id()]); // does not change term, still 1
 
     // broadcast append entries
-    let log_entry = LogEntry::new(TERM, "test".to_string());
+    let command = "test".to_string();
+    let log_entry = LogEntry::new(TERM, command.clone());
+    node_leader.core.leader_append_entry(command);
     node_leader.broadcast_append_entries(vec![log_entry]).await.unwrap();
 
     // node 2 receives append entries from node 1
@@ -187,14 +199,23 @@ async fn test_node_send_append_response() {
 
     // handle append entries
     if let Ok(msg_arc) = request_message {
-        if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg_arc
+        if let Message::AppendEntries {
+            term,
+            leader_id,
+            ref entries,
+            prev_log_index,
+            prev_log_term,
+            leader_commit,
+        } = *msg_arc
         {
             node_follower
                 .handle_append_entries(
                     term,
                     leader_id,
-                    new_entries,
-                    commit_index,
+                    prev_log_index,
+                    prev_log_term,
+                    entries,
+                    leader_commit,
                     &mut create_timer(),
                 )
                 .await
@@ -244,9 +265,16 @@ async fn test_node_send_vote_response() {
 
     // handle vote request
     if let Ok(msg_arc) = message {
-        if let Message::VoteRequest { term, candidate_id } = *msg_arc {
+        if let Message::VoteRequest { term, candidate_id, last_log_index, last_log_term } = *msg_arc
+        {
             node_follower
-                .handle_request_vote(term, candidate_id, &mut create_timer())
+                .handle_request_vote(
+                    term,
+                    candidate_id,
+                    last_log_index,
+                    last_log_term,
+                    &mut create_timer(),
+                )
                 .await
                 .unwrap();
         } else {
@@ -298,9 +326,16 @@ async fn test_node_handle_request_vote_rejects_older_term() {
 
     // handle vote request from node 1
     if let Ok(msg_arc) = message {
-        if let Message::VoteRequest { term, candidate_id } = *msg_arc {
+        if let Message::VoteRequest { term, candidate_id, last_log_index, last_log_term } = *msg_arc
+        {
             node_follower
-                .handle_request_vote(term, candidate_id, &mut create_timer())
+                .handle_request_vote(
+                    term,
+                    candidate_id,
+                    last_log_index,
+                    last_log_term,
+                    &mut create_timer(),
+                )
                 .await
                 .unwrap();
 
@@ -347,9 +382,16 @@ async fn test_node_handle_request_vote_accepts_newer_term() {
 
     // handle vote request from node 1
     if let Ok(msg_arc) = message {
-        if let Message::VoteRequest { term, candidate_id } = *msg_arc {
+        if let Message::VoteRequest { term, candidate_id, last_log_index, last_log_term } = *msg_arc
+        {
             node_follower
-                .handle_request_vote(term, candidate_id, &mut create_timer())
+                .handle_request_vote(
+                    term,
+                    candidate_id,
+                    last_log_index,
+                    last_log_term,
+                    &mut create_timer(),
+                )
                 .await
                 .unwrap();
 
@@ -396,9 +438,16 @@ async fn test_node_handle_request_vote_accepts_equal_term() {
 
     // handle vote request from node 1
     if let Ok(msg_arc) = message {
-        if let Message::VoteRequest { term, candidate_id } = *msg_arc {
+        if let Message::VoteRequest { term, candidate_id, last_log_index, last_log_term } = *msg_arc
+        {
             node_follower
-                .handle_request_vote(term, candidate_id, &mut create_timer())
+                .handle_request_vote(
+                    term,
+                    candidate_id,
+                    last_log_index,
+                    last_log_term,
+                    &mut create_timer(),
+                )
                 .await
                 .unwrap();
 
@@ -449,9 +498,16 @@ async fn test_node_handle_request_vote_rejects_if_already_voted() {
 
     // handle vote request from node 1
     if let Ok(msg_arc) = message {
-        if let Message::VoteRequest { term, candidate_id } = *msg_arc {
+        if let Message::VoteRequest { term, candidate_id, last_log_index, last_log_term } = *msg_arc
+        {
             node_follower
-                .handle_request_vote(term, candidate_id, &mut create_timer())
+                .handle_request_vote(
+                    term,
+                    candidate_id,
+                    last_log_index,
+                    last_log_term,
+                    &mut create_timer(),
+                )
                 .await
                 .unwrap();
 
@@ -501,9 +557,16 @@ async fn test_node_handle_request_vote_accepts_if_not_voted() {
 
     // handle vote request from node 1
     if let Ok(msg_arc) = message {
-        if let Message::VoteRequest { term, candidate_id } = *msg_arc {
+        if let Message::VoteRequest { term, candidate_id, last_log_index, last_log_term } = *msg_arc
+        {
             node_follower
-                .handle_request_vote(term, candidate_id, &mut create_timer())
+                .handle_request_vote(
+                    term,
+                    candidate_id,
+                    last_log_index,
+                    last_log_term,
+                    &mut create_timer(),
+                )
                 .await
                 .unwrap();
 
@@ -545,7 +608,9 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
     node_follower.core.transition_to_follower(NODE_2_TERM);
 
     // node 1 broadcasts append entries
-    let log_entry = LogEntry::new(NODE_1_TERM, "test".to_string());
+    let command = "test".to_string();
+    let log_entry = LogEntry::new(NODE_1_TERM, command.clone());
+    node_leader.core.leader_append_entry(command);
     node_leader.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
 
     // node 2 receives append entries from node 1
@@ -553,14 +618,23 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
 
     // handle append entries
     if let Ok(msg_arc) = request_message {
-        if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg_arc
+        if let Message::AppendEntries {
+            term,
+            leader_id,
+            ref entries,
+            prev_log_index,
+            prev_log_term,
+            leader_commit,
+        } = *msg_arc
         {
             node_follower
                 .handle_append_entries(
                     term,
                     leader_id,
-                    new_entries,
-                    commit_index,
+                    prev_log_index,
+                    prev_log_term,
+                    entries,
+                    leader_commit,
                     &mut create_timer(),
                 )
                 .await
@@ -607,7 +681,9 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
     node_follower.core.transition_to_follower(0); // sets node 2 term to lower than node 1
 
     // node 1 broadcasts append entries
-    let log_entry = LogEntry::new(1, "test".to_string());
+    let command = "test".to_string();
+    let log_entry = LogEntry::new(1, command.clone());
+    node_leader.core.leader_append_entry(command);
     node_leader.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
 
     // node 2 receives append entries from node 1
@@ -615,14 +691,23 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
 
     // handle append entries
     if let Ok(msg_arc) = request_message {
-        if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg_arc
+        if let Message::AppendEntries {
+            term,
+            leader_id,
+            ref entries,
+            prev_log_index,
+            prev_log_term,
+            leader_commit,
+        } = *msg_arc
         {
             node_follower
                 .handle_append_entries(
                     term,
                     leader_id,
-                    new_entries,
-                    commit_index,
+                    prev_log_index,
+                    prev_log_term,
+                    entries,
+                    leader_commit,
                     &mut create_timer(),
                 )
                 .await
@@ -668,7 +753,9 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
     node_follower.core.transition_to_follower(NODE_TERM);
 
     // node 1 broadcasts append entries
-    let log_entry = LogEntry::new(NODE_TERM, "test".to_string());
+    let command = "test".to_string();
+    let log_entry = LogEntry::new(NODE_TERM, command.clone());
+    node_leader.core.leader_append_entry(command);
     node_leader.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
 
     // node 2 receives append entries from node 1
@@ -676,14 +763,23 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
 
     // handle append entries
     if let Ok(msg_arc) = request_message {
-        if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg_arc
+        if let Message::AppendEntries {
+            term,
+            leader_id,
+            ref entries,
+            prev_log_index,
+            prev_log_term,
+            leader_commit,
+        } = *msg_arc
         {
             node_follower
                 .handle_append_entries(
                     term,
                     leader_id,
-                    new_entries,
-                    commit_index,
+                    prev_log_index,
+                    prev_log_term,
+                    entries,
+                    leader_commit,
                     &mut create_timer(),
                 )
                 .await
@@ -782,14 +878,21 @@ async fn test_node_start_append_entries_sends_append_entries_to_all_nodes() {
     let message = receive_message(follower_receiver).await;
 
     if let Ok(msg_arc) = message {
-        if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg_arc
+        if let Message::AppendEntries {
+            term,
+            leader_id,
+            ref entries,
+            prev_log_index,
+            prev_log_term,
+            leader_commit,
+        } = *msg_arc
         {
             assert_eq!(term, 1);
             assert_eq!(leader_id, NODE_ID);
-            assert_eq!(new_entries.len(), node_leader.log().len());
-            assert_eq!(new_entries[0].term, 1);
-            assert_eq!(new_entries[0].command, COMMAND);
-            assert_eq!(commit_index, 0); // should not change, updated after majority of responses
+            assert_eq!(entries.len(), node_leader.log().len());
+            assert_eq!(entries[0].term, 1);
+            assert_eq!(entries[0].command, COMMAND);
+            assert_eq!(leader_commit, 0); // should not change, updated after majority of responses
         } else {
             panic!("Expected an AppendEntries message");
         }
@@ -818,8 +921,10 @@ async fn test_node_process_message_handles_append_entries() {
     let append_msg = Message::AppendEntries {
         term: 1,
         leader_id: node_leader.id(),
-        new_entries: vec![LogEntry::new(1, "process".to_string())],
-        commit_index: 0,
+        entries: vec![LogEntry::new(1, "process".to_string())],
+        prev_log_index: 0,
+        prev_log_term: 1,
+        leader_commit: 0,
     };
 
     // Process the message using the follower's process_message method.
@@ -858,6 +963,8 @@ async fn test_node_process_message_vote_request() {
     let vote_request = Message::VoteRequest {
         term: node_candidate.current_term(),
         candidate_id: node_candidate.id(),
+        last_log_index: node_candidate.log_last_index(),
+        last_log_term: node_candidate.log_last_term(),
     };
 
     // Process the VoteRequest on the follower.
@@ -906,13 +1013,19 @@ async fn test_node_process_message_vote_response() {
     let append_entries = receive_message(follower_receiver)
         .await
         .expect("Expected AppendEntries message after reaching majority");
-    if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } =
-        *append_entries
+    if let Message::AppendEntries {
+        term,
+        leader_id,
+        ref entries,
+        prev_log_index,
+        prev_log_term,
+        leader_commit,
+    } = *append_entries
     {
         assert_eq!(term, node_candidate.current_term());
         assert_eq!(leader_id, node_candidate.id());
-        assert!(new_entries.is_empty(), "Expected empty entries in the heartbeat AppendEntries");
-        assert_eq!(commit_index, 0);
+        assert!(entries.is_empty(), "Expected empty entries in the heartbeat AppendEntries");
+        assert_eq!(leader_commit, 0);
     } else {
         panic!("Expected an AppendEntries message after majority vote");
     }
@@ -947,9 +1060,25 @@ async fn test_node_process_message_append_response() {
     let msg1 = receive_message(follower1_receiver)
         .await
         .expect("Expected AppendEntries message on follower1");
-    if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg1 {
+    if let Message::AppendEntries {
+        term,
+        leader_id,
+        ref entries,
+        prev_log_index,
+        prev_log_term,
+        leader_commit,
+    } = *msg1
+    {
         node_follower1
-            .handle_append_entries(term, leader_id, new_entries, commit_index, &mut create_timer())
+            .handle_append_entries(
+                term,
+                leader_id,
+                prev_log_index,
+                prev_log_term,
+                entries,
+                leader_commit,
+                &mut create_timer(),
+            )
             .await
             .unwrap();
     } else {
@@ -959,9 +1088,25 @@ async fn test_node_process_message_append_response() {
     let msg2 = receive_message(follower2_receiver)
         .await
         .expect("Expected AppendEntries message on follower2");
-    if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *msg2 {
+    if let Message::AppendEntries {
+        term,
+        leader_id,
+        ref entries,
+        prev_log_index,
+        prev_log_term,
+        leader_commit,
+    } = *msg2
+    {
         node_follower2
-            .handle_append_entries(term, leader_id, new_entries, commit_index, &mut create_timer())
+            .handle_append_entries(
+                term,
+                leader_id,
+                prev_log_index,
+                prev_log_term,
+                entries,
+                leader_commit,
+                &mut create_timer(),
+            )
             .await
             .unwrap();
     } else {
@@ -1003,7 +1148,7 @@ async fn test_node_process_message_start_election_cmd_not_leader() {
 
     // The other node should receive a VoteRequest from the candidate.
     let vote_req = receive_message(follower_receiver).await.expect("Expected VoteRequest message");
-    if let Message::VoteRequest { term, candidate_id } = *vote_req {
+    if let Message::VoteRequest { term, candidate_id, last_log_index, last_log_term } = *vote_req {
         assert_eq!(term, node_candidate.current_term());
         assert_eq!(candidate_id, node_candidate.id());
     } else {
@@ -1058,12 +1203,20 @@ async fn test_node_process_message_start_append_entries_cmd_as_leader() {
     // The follower should receive the corresponding AppendEntries message.
     let append_msg =
         receive_message(follower_receiver).await.expect("Expected AppendEntries message");
-    if let Message::AppendEntries { term, leader_id, ref new_entries, commit_index } = *append_msg {
+    if let Message::AppendEntries {
+        term,
+        leader_id,
+        ref entries,
+        prev_log_index,
+        prev_log_term,
+        leader_commit,
+    } = *append_msg
+    {
         assert_eq!(term, node_leader.current_term());
         assert_eq!(leader_id, node_leader.id());
-        assert_eq!(new_entries.len(), 1);
-        assert_eq!(new_entries[0].command, cmd);
-        assert_eq!(commit_index, 0);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, cmd);
+        assert_eq!(leader_commit, 0);
     } else {
         panic!("Expected an AppendEntries message");
     }

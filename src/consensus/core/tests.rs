@@ -307,7 +307,7 @@ fn test_core_follower_append_entries() {
         vec![LogEntry::new(TERM, "test1".to_string()), LogEntry::new(TERM, "test2".to_string())];
 
     // Test appending entries
-    let (consistent, modified) = core.follower_append_entries(&entries);
+    let (consistent, modified) = core.follower_append_entries(0, TERM, &entries);
     assert!(consistent);
     assert!(modified);
     assert_eq!(core.log().len(), 2);
@@ -320,7 +320,7 @@ fn test_core_follower_append_entries_empty() {
     let mut core = NodeCore::new(NODE_ID);
 
     // Test appending empty entries (heartbeat)
-    let (consistent, modified) = core.follower_append_entries(&[]);
+    let (consistent, modified) = core.follower_append_entries(0, 0, &[]);
     assert!(consistent);
     assert!(!modified);
     assert_eq!(core.log().len(), 0);
@@ -333,7 +333,7 @@ fn test_core_decide_vote_newer_term() {
     const CANDIDATE_TERM: u64 = 2;
 
     // Test voting for candidate with newer term
-    let (granted, term) = core.decide_vote(CANDIDATE_ID, CANDIDATE_TERM);
+    let (granted, term) = core.decide_vote(CANDIDATE_ID, CANDIDATE_TERM, 0, 0);
     assert!(granted);
     assert_eq!(term, CANDIDATE_TERM);
     assert_eq!(core.current_term(), CANDIDATE_TERM);
@@ -351,7 +351,7 @@ fn test_core_decide_vote_older_term() {
     core.current_term = CURRENT_TERM;
 
     // Test voting for candidate with older term
-    let (granted, term) = core.decide_vote(CANDIDATE_ID, CANDIDATE_TERM);
+    let (granted, term) = core.decide_vote(CANDIDATE_ID, CANDIDATE_TERM, 0, 0);
     assert!(!granted); // Should not grant vote to candidate with older term
     assert_eq!(term, CURRENT_TERM); // Should keep current term
     assert_eq!(core.current_term(), CURRENT_TERM);
@@ -366,13 +366,13 @@ fn test_core_decide_vote_already_voted() {
     const TERM: u64 = 1;
 
     // First vote
-    let (granted, term) = core.decide_vote(CANDIDATE_ID, TERM);
+    let (granted, term) = core.decide_vote(CANDIDATE_ID, TERM, 0, 0);
     assert!(granted);
     assert_eq!(term, TERM);
     assert_eq!(core.voted_for(), Some(CANDIDATE_ID));
 
     // Second vote for different candidate
-    let (granted, term) = core.decide_vote(OTHER_CANDIDATE_ID, TERM);
+    let (granted, term) = core.decide_vote(OTHER_CANDIDATE_ID, TERM, 0, 0);
     assert!(!granted);
     assert_eq!(term, TERM);
     assert_eq!(core.voted_for(), Some(CANDIDATE_ID));

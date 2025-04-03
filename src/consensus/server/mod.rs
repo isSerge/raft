@@ -77,6 +77,16 @@ impl NodeServer {
     pub fn match_index_for(&self, peer_id: u64) -> Option<u64> {
         self.core.match_index_for(peer_id)
     }
+
+    /// Get the last log index.
+    pub fn log_last_index(&self) -> u64 {
+        self.core.log_last_index()
+    }
+
+    /// Get the last log term.
+    pub fn log_last_term(&self) -> u64 {
+        self.core.log_last_term()
+    }
 }
 
 // RPC methods
@@ -122,16 +132,16 @@ impl NodeServer {
         }
 
         let term = self.current_term();
-        let msg = Message::VoteRequest { term, candidate_id: self.id() };
+        let last_log_index = self.log_last_index();
+        let last_log_term = self.log_last_term();
+        let msg =
+            Message::VoteRequest { term, candidate_id: self.id(), last_log_index, last_log_term };
         info!("Node {} broadcasting VoteRequest: {:?}", self.id(), msg);
         self.broadcast(msg).await
     }
 
     /// Broadcast an AppendEntries request to all other nodes.
-    async fn broadcast_append_entries(
-        &self,
-        new_entries: Vec<LogEntry>,
-    ) -> Result<(), ConsensusError> {
+    async fn broadcast_append_entries(&self, entries: Vec<LogEntry>) -> Result<(), ConsensusError> {
         if self.core.state() != NodeState::Leader {
             warn!("Node {} tried to broadcast AppendEntries but is not Leader", self.id());
             return Err(ConsensusError::NotLeader(self.id()));
@@ -139,17 +149,26 @@ impl NodeServer {
 
         let term = self.current_term();
         let leader_id = self.id();
-        let commit_index = self.commit_index();
+        let prev_log_index = self.log().len() as u64;
+        let prev_log_term = self.log_last_term();
+        let leader_commit = self.commit_index();
 
         info!(
             "Node {} (Leader Term: {}) broadcasting AppendEntries: commit_index={}, entries={}",
             self.id(),
             self.current_term(),
             self.commit_index(),
-            new_entries.len()
+            entries.len()
         );
 
-        let msg = Message::AppendEntries { term, leader_id, new_entries, commit_index };
+        let msg = Message::AppendEntries {
+            term,
+            leader_id,
+            entries,
+            prev_log_index,
+            prev_log_term,
+            leader_commit,
+        };
 
         self.broadcast(msg).await
     }
@@ -188,6 +207,8 @@ impl NodeServer {
         &mut self,
         candidate_term: u64,
         candidate_id: u64,
+        candidate_last_log_index: u64,
+        candidate_last_log_term: u64,
         timer: &mut NodeTimer,
     ) -> Result<(), ConsensusError> {
         info!(
@@ -209,7 +230,12 @@ impl NodeServer {
             timer.reset_election_timer();
         }
 
-        let (vote_granted, term_to_respond) = self.core.decide_vote(candidate_id, candidate_term);
+        let (vote_granted, term_to_respond) = self.core.decide_vote(
+            candidate_id,
+            candidate_term,
+            candidate_last_log_index,
+            candidate_last_log_term,
+        );
 
         if vote_granted {
             info!(
@@ -238,6 +264,8 @@ impl NodeServer {
         &mut self,
         leader_term: u64,
         leader_id: u64,
+        prev_log_index: u64,
+        prev_log_term: u64,
         new_entries: &[LogEntry],
         leader_commit_index: u64,
         timer: &mut NodeTimer,
@@ -270,7 +298,8 @@ impl NodeServer {
 
         // 4. Check log consistency and append log entries to own log
         let initial_log_length = self.log().len();
-        let (is_log_consistent, log_modified) = self.core.follower_append_entries(new_entries);
+        let (is_log_consistent, log_modified) =
+            self.core.follower_append_entries(prev_log_index, prev_log_term, new_entries);
         let last_appended_index = if log_modified {
             Some(self.log().len() as u64)
         } else {
@@ -538,15 +567,31 @@ impl NodeServer {
         timer: &mut NodeTimer,
     ) -> Result<(), ConsensusError> {
         match *msg {
-            Message::VoteRequest { term, candidate_id } => {
-                self.handle_request_vote(term, candidate_id, timer).await?;
+            Message::VoteRequest { term, candidate_id, last_log_index, last_log_term } => {
+                self.handle_request_vote(term, candidate_id, last_log_index, last_log_term, timer)
+                    .await?;
             }
             Message::VoteResponse { term, vote_granted, from_id } => {
                 self.handle_vote_response(term, from_id, vote_granted, timer).await?;
             }
-            Message::AppendEntries { term, leader_id, ref new_entries, commit_index } => {
-                self.handle_append_entries(term, leader_id, new_entries, commit_index, timer)
-                    .await?;
+            Message::AppendEntries {
+                term,
+                leader_id,
+                ref entries,
+                prev_log_index,
+                prev_log_term,
+                leader_commit,
+            } => {
+                self.handle_append_entries(
+                    term,
+                    leader_id,
+                    prev_log_index,
+                    prev_log_term,
+                    entries,
+                    leader_commit,
+                    timer,
+                )
+                .await?;
             }
             Message::AppendResponse { term, success, from_id, last_appended_index } => {
                 self.handle_append_response(term, success, last_appended_index, from_id, timer)
@@ -631,6 +676,7 @@ impl NodeServer {
 
         if applied_any {
             let _ = self.event_tx.send(ConsensusEvent::EntryCommitted {
+                index: commit_idx,
                 entry: self
                     .log()
                     // Use (commit_idx - 1) to convert to Vec index.
