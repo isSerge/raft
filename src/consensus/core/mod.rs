@@ -404,7 +404,49 @@ impl NodeCore {
     /// Check if the log is consistent with another log.
     // TODO: Implement this.
     fn check_log_consistency(&self, prev_log_index: u64, prev_log_term: u64) -> bool {
-        true
+        if prev_log_index == 0 {
+            // Base case: Leader is sending entries from the beginning. Always consistent.
+            true
+        } else if prev_log_index > self.log_last_index() {
+            // Follower's log is shorter than the index the leader expects to precede the
+            // new entries.
+            debug!(
+                "Node {} log consistency check failed: prevLogIndex ({}) > log length ({})",
+                self.id(),
+                prev_log_index,
+                self.log_last_index()
+            );
+            false
+        } else {
+            // Follower has an entry at prev_log_index. Check if terms match.
+            // Raft index `prev_log_index` is Vec index `prev_log_index - 1`.
+            match self.log.get((prev_log_index - 1) as usize) {
+                Some(entry) =>
+                    if entry.term == prev_log_term {
+                        true
+                    } else {
+                        debug!(
+                            "Node {} log consistency check failed: term mismatch at index {}. \
+                             Follower term: {}, Leader prevLogTerm: {}",
+                            self.id(),
+                            prev_log_index,
+                            entry.term,
+                            prev_log_term
+                        );
+                        false
+                    },
+                None => {
+                    // Should be caught by the length check above, but belt-and-suspenders.
+                    error!(
+                        "Node {} log consistency check error: Log entry not found at index {} \
+                         despite passing length check.",
+                        self.id(),
+                        prev_log_index
+                    );
+                    false
+                }
+            }
+        }
     }
 
     // Handles appending entries received from a leader
@@ -516,13 +558,16 @@ impl NodeCore {
             return (false, self.current_term());
         }
 
-        // 4. Check if candidate log is consistent
-        let candidate_log_is_consistent =
-            self.check_log_consistency(candidate_last_log_index, candidate_last_log_term);
+        // 4. Check if candidate log is up to date
+        let candidate_log_is_up_to_date = match candidate_last_log_term.cmp(&self.log_last_term()) {
+            Ordering::Greater => true,
+            Ordering::Less => false,
+            Ordering::Equal => candidate_last_log_index >= self.log_last_index(),
+        };
 
-        if !candidate_log_is_consistent {
+        if !candidate_log_is_up_to_date {
             debug!(
-                "Node {} rejecting vote for {} in term {}: candidate log is not consistent",
+                "Node {} rejecting vote for {} in term {}: candidate log is not up to date",
                 self.id, candidate_id, candidate_term
             );
             return (false, self.current_term());
