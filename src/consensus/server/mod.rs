@@ -227,18 +227,17 @@ impl NodeServer {
     }
 
     /// Start an AppendEntries
+    /// Leader appends a new entry to its log. Replication will occur via
+    /// heartbeat. Returns Ok(()) if successful, Err if not leader.
     async fn start_append_entries(&mut self, command: String) -> Result<(), ConsensusError> {
         // Delegate appending to the core.
-        if self.core.leader_append_entry(command) {
-            let new_entry =
-                self.log().last().expect("Log should not be empty after appending").clone();
+        if self.core.leader_append_entry(command.clone()) {
             info!(
-                "Node {} appended new entry to log: {:?}. Broadcasting to all other nodes.",
+                "Node {} appended new entry to log: {:?}. Replication will occur via heartbeat.",
                 self.id(),
-                new_entry
+                command
             );
-            // Send AppendEntries to all followers
-            self.send_append_entries_to_all_followers().await
+            Ok(())
         } else {
             Err(ConsensusError::NotLeader(self.id()))
         }

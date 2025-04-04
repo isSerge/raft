@@ -825,7 +825,7 @@ async fn test_node_start_append_entries_updates_log() {
     assert_eq!(node.log().len(), 0);
     assert_eq!(node.state_machine.get_state(), 0);
 
-    // append to log and broadcast
+    // append to log
     node.start_append_entries(COMMAND.to_string()).await.unwrap();
 
     // check that the log has the new entry
@@ -850,57 +850,6 @@ async fn test_node_start_append_entries_rejects_if_not_leader() {
     let result = node.start_append_entries(COMMAND.to_string()).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), ConsensusError::NotLeader(NODE_ID));
-}
-
-#[tokio::test]
-async fn test_node_start_append_entries_appends_locally() {
-    const NODE_ID: u64 = 0;
-    const COMMAND: &str = "test command";
-    let mut nodes = create_network(2).await;
-    let (node_leader, _, node_follower, follower_receiver) = get_two_nodes(&mut nodes);
-
-    // start as follower, transition to candidate
-    node_leader.core.transition_to_candidate(); // sets term to 1, votes for self
-
-    // transition node 1 to leader
-    node_leader.core.transition_to_leader(&[node_leader.id(), node_follower.id()]); // does not change term, still 1
-
-    // append to log and broadcast
-    node_leader.start_append_entries(COMMAND.to_string()).await.unwrap();
-
-    // check that the log has the new entry
-    assert_eq!(node_leader.log().len(), 1);
-    assert_eq!(node_leader.log()[0].term, 1);
-    assert_eq!(node_leader.log()[0].command, COMMAND);
-    assert_eq!(node_leader.commit_index(), 0);
-
-    // check that node 2 received the append entries
-    let message = receive_message(follower_receiver).await;
-
-    if let Ok(msg_arc) = message {
-        if let Message::AppendEntries {
-            term,
-            leader_id,
-            ref entries,
-            prev_log_index,
-            prev_log_term,
-            leader_commit,
-        } = *msg_arc
-        {
-            assert_eq!(term, 1);
-            assert_eq!(leader_id, NODE_ID);
-            assert_eq!(entries.len(), node_leader.log().len());
-            assert_eq!(entries[0].term, 1);
-            assert_eq!(entries[0].command, COMMAND);
-            assert_eq!(leader_commit, 0); // should not change, updated after majority of responses
-            assert_eq!(prev_log_index, 0);
-            assert_eq!(prev_log_term, 0);
-        } else {
-            panic!("Expected an AppendEntries message");
-        }
-    } else {
-        panic!("Expected an AppendEntries message");
-    }
 }
 
 #[tokio::test]
@@ -1036,104 +985,6 @@ async fn test_node_process_message_vote_response() {
 }
 
 #[tokio::test]
-async fn test_node_process_message_append_response() {
-    // Using a network of 3 nodes to simulate a majority commit update.
-    let mut nodes = create_network(3).await;
-    // Get leader and two follower nodes.
-    let (
-        node_leader,
-        leader_receiver,
-        node_follower1,
-        follower1_receiver,
-        node_follower2,
-        follower2_receiver,
-    ) = get_three_nodes(&mut nodes);
-
-    // Prepare: transition leader to candidate then leader.
-    node_leader.core.transition_to_candidate();
-    node_leader.core.transition_to_leader(&[
-        node_leader.id(),
-        node_follower1.id(),
-        node_follower2.id(),
-    ]);
-
-    // Leader starts an AppendEntries command (appending a new log entry).
-    node_leader.start_append_entries("update".to_string()).await.unwrap();
-
-    // Each follower receives the AppendEntries message and processes it.
-    let msg1 = receive_message(follower1_receiver)
-        .await
-        .expect("Expected AppendEntries message on follower1");
-    if let Message::AppendEntries {
-        term,
-        leader_id,
-        ref entries,
-        prev_log_index,
-        prev_log_term,
-        leader_commit,
-    } = *msg1
-    {
-        node_follower1
-            .handle_append_entries(
-                term,
-                leader_id,
-                prev_log_index,
-                prev_log_term,
-                entries,
-                leader_commit,
-                &mut create_timer(),
-            )
-            .await
-            .unwrap();
-    } else {
-        panic!("Expected AppendEntries message on follower1");
-    }
-
-    let msg2 = receive_message(follower2_receiver)
-        .await
-        .expect("Expected AppendEntries message on follower2");
-    if let Message::AppendEntries {
-        term,
-        leader_id,
-        ref entries,
-        prev_log_index,
-        prev_log_term,
-        leader_commit,
-    } = *msg2
-    {
-        node_follower2
-            .handle_append_entries(
-                term,
-                leader_id,
-                prev_log_index,
-                prev_log_term,
-                entries,
-                leader_commit,
-                &mut create_timer(),
-            )
-            .await
-            .unwrap();
-    } else {
-        panic!("Expected AppendEntries message on follower2");
-    }
-
-    // Leader now receives AppendResponse messages from both followers.
-    let resp1 =
-        receive_message(leader_receiver).await.expect("Expected AppendResponse from follower1");
-    node_leader.process_message(resp1, &mut create_timer()).await.unwrap();
-
-    let resp2 =
-        receive_message(leader_receiver).await.expect("Expected AppendResponse from follower2");
-    node_leader.process_message(resp2, &mut create_timer()).await.unwrap();
-
-    // Verify that the leader's commit index has been updated.
-    assert!(
-        node_leader.commit_index() > 0,
-        "Commit index should be updated after majority responses"
-    );
-}
-
-#[tokio::test]
 async fn test_node_process_message_start_election_cmd_not_leader() {
     let mut nodes = create_network(2).await;
     let (node_candidate, _, _, follower_receiver) = get_two_nodes(&mut nodes);
@@ -1205,29 +1056,6 @@ async fn test_node_process_message_start_append_entries_cmd_as_leader() {
     // The leader's log should now contain the new entry.
     assert_eq!(node_leader.log().len(), 1);
     assert_eq!(node_leader.log()[0].command, cmd);
-
-    // The follower should receive the corresponding AppendEntries message.
-    let append_msg =
-        receive_message(follower_receiver).await.expect("Expected AppendEntries message");
-    if let Message::AppendEntries {
-        term,
-        leader_id,
-        ref entries,
-        prev_log_index,
-        prev_log_term,
-        leader_commit,
-    } = *append_msg
-    {
-        assert_eq!(term, node_leader.current_term());
-        assert_eq!(leader_id, node_leader.id());
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].command, cmd);
-        assert_eq!(leader_commit, 0);
-        assert_eq!(prev_log_index, 0);
-        assert_eq!(prev_log_term, 0);
-    } else {
-        panic!("Expected an AppendEntries message");
-    }
 }
 
 #[tokio::test]
