@@ -99,7 +99,7 @@ async fn test_node_broadcast_vote_request_fails_if_not_candidate() {
 }
 
 #[tokio::test]
-async fn test_node_broadcast_append_entries_sends_message_to_all_nodes() {
+async fn test_node_send_append_entries_to_all_followers_sends_message_to_all_nodes() {
     const NODE_ID: u64 = 0;
     const TERM: u64 = 1;
     let mut nodes = create_network(2).await;
@@ -115,7 +115,7 @@ async fn test_node_broadcast_append_entries_sends_message_to_all_nodes() {
     let command = "test".to_string();
     let log_entry = LogEntry::new(TERM, command.clone());
     node_leader.core.leader_append_entry(command);
-    node_leader.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
+    node_leader.send_append_entries_to_all_followers().await.unwrap();
 
     // node 2 receives append entries from node 1
     let request_message = receive_message(follower_receiver).await;
@@ -194,9 +194,8 @@ async fn test_node_send_append_response() {
 
     // broadcast append entries
     let command = "test".to_string();
-    let log_entry = LogEntry::new(TERM, command.clone());
-    node_leader.core.leader_append_entry(command);
-    node_leader.broadcast_append_entries(vec![log_entry]).await.unwrap();
+    node_leader.core.leader_append_entry(command.clone());
+    node_leader.send_append_entries_to_all_followers().await.unwrap();
 
     // node 2 receives append entries from node 1
     let request_message = receive_message(follower_receiver).await;
@@ -613,9 +612,8 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
 
     // node 1 broadcasts append entries
     let command = "test".to_string();
-    let log_entry = LogEntry::new(NODE_1_TERM, command.clone());
-    node_leader.core.leader_append_entry(command);
-    node_leader.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
+    node_leader.core.leader_append_entry(command.clone());
+    node_leader.send_append_entries_to_all_followers().await.unwrap();
 
     // node 2 receives append entries from node 1
     let request_message = receive_message(follower_receiver).await;
@@ -686,9 +684,8 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
 
     // node 1 broadcasts append entries
     let command = "test".to_string();
-    let log_entry = LogEntry::new(1, command.clone());
-    node_leader.core.leader_append_entry(command);
-    node_leader.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
+    node_leader.core.leader_append_entry(command.clone());
+    node_leader.send_append_entries_to_all_followers().await.unwrap();
 
     // node 2 receives append entries from node 1
     let request_message = receive_message(follower_receiver).await;
@@ -758,9 +755,8 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
 
     // node 1 broadcasts append entries
     let command = "test".to_string();
-    let log_entry = LogEntry::new(NODE_TERM, command.clone());
-    node_leader.core.leader_append_entry(command);
-    node_leader.broadcast_append_entries(vec![log_entry.clone()]).await.unwrap();
+    node_leader.core.leader_append_entry(command.clone());
+    node_leader.send_append_entries_to_all_followers().await.unwrap();
 
     // node 2 receives append entries from node 1
     let request_message = receive_message(follower_receiver).await;

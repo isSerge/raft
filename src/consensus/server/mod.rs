@@ -10,7 +10,7 @@ use crate::{
     consensus::{
         ConsensusError, ConsensusEvent, LogEntry, NodeCore, NodeState, NodeTimer, TimerType,
     },
-    messaging::{Message, NodeMessenger},
+    messaging::{Message, MessagingError, NodeMessenger},
     state_machine::StateMachine,
 };
 
@@ -139,29 +139,68 @@ impl NodeServer {
         self.broadcast(msg).await
     }
 
-    /// Broadcast an AppendEntries request to all other nodes.
-    async fn broadcast_append_entries(&self, entries: Vec<LogEntry>) -> Result<(), ConsensusError> {
+    /// Send an AppendEntries to all followers.
+    async fn send_append_entries_to_all_followers(&self) -> Result<(), ConsensusError> {
         if self.core.state() != NodeState::Leader {
-            warn!("Node {} tried to broadcast AppendEntries but is not Leader", self.id());
+            warn!("Node {} tried to send AppendEntries to followers but is not Leader", self.id());
             return Err(ConsensusError::NotLeader(self.id()));
         }
 
-        let term = self.current_term();
-        let leader_id = self.id();
-        let prev_log_index = self.log().len() as u64;
-        let prev_log_term = self.log_last_term();
+        info!("Node {} sending AppendEntries to all followers", self.id());
+
+        let peer_ids = self.messenger.get_peer_ids().await?;
+
+        let mut results = Vec::new();
+
+        for peer_id in peer_ids {
+            let result = self.send_append_entries_to_follower(peer_id).await;
+            results.push(result);
+        }
+
+        if results.iter().any(|r| r.is_err()) {
+            error!("Node {} failed to send AppendEntries to at least one follower", self.id());
+            Err(ConsensusError::Transport(MessagingError::BroadcastError))
+        } else {
+            info!("Node {} successfully sent AppendEntries to all followers", self.id());
+            Ok(())
+        }
+    }
+
+    /// Send an AppendEntries to a follower.
+    async fn send_append_entries_to_follower(&self, peer_id: u64) -> Result<(), ConsensusError> {
+        if self.core.state() != NodeState::Leader {
+            warn!(
+                "Node {} tried to send AppendEntries to follower {} but is not Leader",
+                self.id(),
+                peer_id
+            );
+            return Err(ConsensusError::NotLeader(self.id()));
+        }
+
+        let current_term = self.current_term();
         let leader_commit = self.commit_index();
+        let leader_id = self.id();
 
-        info!(
-            "Node {} (Leader Term: {}) broadcasting AppendEntries: commit_index={}, entries={}",
-            self.id(),
-            self.current_term(),
-            self.commit_index(),
-            entries.len()
-        );
+        // Get next index and previous log index and term
+        let next_index =
+            self.core.next_index_for(peer_id).ok_or(ConsensusError::NodeNotFound(self.id()))?;
+        let prev_log_index = next_index - 1;
+        let prev_log_term = if prev_log_index > 0 {
+            self.log().get(prev_log_index as usize).map_or(0, |entry| entry.term)
+        } else {
+            0
+        };
 
+        // Get entries to send
+        let entries = if self.log_last_index() >= next_index {
+            self.log()[(next_index - 1) as usize..].to_vec()
+        } else {
+            vec![] // No entries to send - sending heartbeat
+        };
+
+        // Send message
         let msg = Message::AppendEntries {
-            term,
+            term: current_term,
             leader_id,
             entries,
             prev_log_index,
@@ -169,7 +208,7 @@ impl NodeServer {
             leader_commit,
         };
 
-        self.broadcast(msg).await
+        self.messenger.send_to(peer_id, Arc::new(msg)).await.map_err(ConsensusError::Transport)
     }
 }
 
@@ -194,8 +233,8 @@ impl NodeServer {
                 self.id(),
                 new_entry
             );
-            // Broadcast the new log entry to all other nodes.
-            self.broadcast_append_entries(vec![new_entry]).await
+            // Send AppendEntries to all followers
+            self.send_append_entries_to_all_followers().await
         } else {
             Err(ConsensusError::NotLeader(self.id()))
         }
@@ -413,8 +452,8 @@ impl NodeServer {
                 // Signal that the node is now a leader
                 let _ = self.event_tx.send(ConsensusEvent::LeaderElected { leader_id: self.id() });
 
-                // Send an empty AppendEntries to all other nodes to establish leadership.
-                self.broadcast_append_entries(vec![]).await?;
+                // Send AppendEntries to all other nodes to establish leadership.
+                self.send_append_entries_to_all_followers().await?;
             }
         } else {
             info!(
@@ -523,7 +562,7 @@ impl NodeServer {
     /// Send a heartbeat to all other nodes.
     async fn send_heartbeat(&self) -> Result<(), ConsensusError> {
         info!("Node {} sending heartbeat to all other nodes", self.id());
-        self.broadcast_append_entries(vec![]).await
+        self.send_append_entries_to_all_followers().await
     }
 
     /// Handle a timer event (election or heartbeat timeout).
