@@ -153,6 +153,10 @@ impl NodeServer {
         let mut results = Vec::new();
 
         for peer_id in peer_ids {
+            if peer_id == self.id() {
+                continue;
+            }
+
             let result = self.send_append_entries_to_follower(peer_id).await;
             results.push(result);
         }

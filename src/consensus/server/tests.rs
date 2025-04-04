@@ -134,8 +134,8 @@ async fn test_node_send_append_entries_to_all_followers_sends_message_to_all_nod
             assert_eq!(term, TERM);
             assert_eq!(leader_id, NODE_ID);
             assert_eq!(entries, &[log_entry]);
-            assert_eq!(prev_log_index, 1);
-            assert_eq!(prev_log_term, TERM);
+            assert_eq!(prev_log_index, 0);
+            assert_eq!(prev_log_term, 0);
             assert_eq!(leader_commit, 0);
         } else {
             panic!("Expected an AppendEntries message");
@@ -853,7 +853,7 @@ async fn test_node_start_append_entries_rejects_if_not_leader() {
 }
 
 #[tokio::test]
-async fn test_node_start_append_entries_sends_append_entries_to_all_nodes() {
+async fn test_node_start_append_entries_appends_locally() {
     const NODE_ID: u64 = 0;
     const COMMAND: &str = "test command";
     let mut nodes = create_network(2).await;
@@ -893,8 +893,8 @@ async fn test_node_start_append_entries_sends_append_entries_to_all_nodes() {
             assert_eq!(entries[0].term, 1);
             assert_eq!(entries[0].command, COMMAND);
             assert_eq!(leader_commit, 0); // should not change, updated after majority of responses
-            assert_eq!(prev_log_index, 1);
-            assert_eq!(prev_log_term, 1);
+            assert_eq!(prev_log_index, 0);
+            assert_eq!(prev_log_term, 0);
         } else {
             panic!("Expected an AppendEntries message");
         }
@@ -1223,8 +1223,8 @@ async fn test_node_process_message_start_append_entries_cmd_as_leader() {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, cmd);
         assert_eq!(leader_commit, 0);
-        assert_eq!(prev_log_index, 1);
-        assert_eq!(prev_log_term, 1);
+        assert_eq!(prev_log_index, 0);
+        assert_eq!(prev_log_term, 0);
     } else {
         panic!("Expected an AppendEntries message");
     }
