@@ -49,31 +49,6 @@ fn get_two_nodes(
     }
 }
 
-/// Returns mutable references to the first three nodes in the slice.
-fn get_three_nodes(
-    nodes: &mut [TestNode],
-) -> (
-    &mut NodeServer,
-    &mut NodeReceiver,
-    &mut NodeServer,
-    &mut NodeReceiver,
-    &mut NodeServer,
-    &mut NodeReceiver,
-) {
-    if let [node1, node2, node3, ..] = nodes {
-        (
-            &mut node1.server,
-            &mut node1.receiver,
-            &mut node2.server,
-            &mut node2.receiver,
-            &mut node3.server,
-            &mut node3.receiver,
-        )
-    } else {
-        panic!("Expected at least 3 nodes");
-    }
-}
-
 /// Helper function to receive a message in tests
 async fn receive_message(receiver: &mut NodeReceiver) -> Result<Arc<Message>, ConsensusError> {
     receiver.receive().await.map_err(ConsensusError::Transport)
@@ -234,11 +209,10 @@ async fn test_node_send_append_response() {
     let response_message = receive_message(leader_receiver).await;
 
     if let Ok(msg_arc) = response_message {
-        if let Message::AppendResponse { term, success, from_id, last_appended_index } = *msg_arc {
+        if let Message::AppendResponse { term, success, from_id } = *msg_arc {
             assert_eq!(term, TERM);
             assert!(success);
             assert_eq!(from_id, NODE_ID_2);
-            assert_eq!(last_appended_index, Some(1));
         } else {
             panic!("Expected an AppendResponse message");
         }
@@ -645,13 +619,10 @@ async fn test_node_handle_append_entries_rejects_if_term_is_lower() {
             // check that the append response is a rejection
             let response_message = receive_message(leader_receiver).await;
             if let Ok(msg_arc) = response_message {
-                if let Message::AppendResponse { term, success, from_id, last_appended_index } =
-                    *msg_arc
-                {
+                if let Message::AppendResponse { term, success, from_id } = *msg_arc {
                     assert_eq!(term, NODE_2_TERM);
                     assert!(!success);
                     assert_eq!(from_id, NODE_ID_2);
-                    assert_eq!(last_appended_index, None);
                 } else {
                     panic!("Expected an AppendResponse message");
                 }
@@ -717,13 +688,10 @@ async fn test_node_handle_append_entries_accepts_if_term_is_higher() {
             // check that the append response is a rejection
             let response_message = receive_message(leader_receiver).await;
             if let Ok(msg_arc) = response_message {
-                if let Message::AppendResponse { term, success, from_id, last_appended_index } =
-                    *msg_arc
-                {
+                if let Message::AppendResponse { term, success, from_id } = *msg_arc {
                     assert_eq!(term, 1);
                     assert!(success);
                     assert_eq!(from_id, NODE_ID_2);
-                    assert_eq!(last_appended_index, Some(1));
                 } else {
                     panic!("Expected an AppendResponse message");
                 }
@@ -788,13 +756,10 @@ async fn test_node_handle_append_entries_accepts_if_term_is_equal() {
             // check that the append response is a rejection
             let response_message = receive_message(leader_receiver).await;
             if let Ok(msg_arc) = response_message {
-                if let Message::AppendResponse { term, success, from_id, last_appended_index } =
-                    *msg_arc
-                {
+                if let Message::AppendResponse { term, success, from_id } = *msg_arc {
                     assert_eq!(term, NODE_TERM);
                     assert!(success);
                     assert_eq!(from_id, NODE_ID_2);
-                    assert_eq!(last_appended_index, Some(1));
                 } else {
                     panic!("Expected an AppendResponse message");
                 }
@@ -888,11 +853,10 @@ async fn test_node_process_message_handles_append_entries() {
     let response = receive_message(leader_receiver)
         .await
         .expect("Expected AppendResponse from process_message");
-    if let Message::AppendResponse { term, success, from_id, last_appended_index } = *response {
+    if let Message::AppendResponse { term, success, from_id } = *response {
         assert_eq!(term, 1);
         assert!(success, "Expected AppendResponse to succeed");
         assert_eq!(from_id, node_follower.id());
-        assert_eq!(last_appended_index, Some(1));
     } else {
         panic!("Expected an AppendResponse message");
     }

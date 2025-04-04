@@ -18,7 +18,7 @@ pub enum Message {
         leader_commit: u64,
     },
     /// Response to append request
-    AppendResponse { term: u64, success: bool, from_id: u64, last_appended_index: Option<u64> },
+    AppendResponse { term: u64, success: bool, from_id: u64 },
 
     // Commands
     /// Command to start an election

@@ -149,6 +149,23 @@ impl NodeCore {
             false
         }
     }
+
+    /// Record a vote for self during candidate state.
+    pub fn record_vote_received(&mut self) {
+        if self.state() != NodeState::Candidate {
+            warn!("Node {} attempted to record vote for self but is not a candidate", self.id);
+            return;
+        }
+
+        self.votes_received += 1;
+
+        info!(
+            "Node {} received vote from Node {}, total votes: {}",
+            self.id,
+            self.id,
+            self.votes_received()
+        );
+    }
 }
 
 // State transitions
@@ -272,6 +289,7 @@ impl NodeCore {
         success: bool,
         prev_log_index: u64,
         entries_len: usize,
+        total_nodes: usize,
     ) -> (bool, u64, u64) {
         let old_commit_index = self.commit_index();
 
@@ -305,7 +323,7 @@ impl NodeCore {
                 self.id, from_id, new_next_index
             );
 
-            // TODO: update commit index based on majority of match_index
+            self.leader_recalculate_commit_index(total_nodes);
         } else {
             // Append failed. Decrement next_index for the follower.
             let current_next_index = self.next_index.entry(from_id).or_insert(0);
@@ -579,20 +597,60 @@ impl NodeCore {
         (true, self.current_term())
     }
 
-    /// Record a vote for self during candidate state.
-    pub fn record_vote_received(&mut self) {
-        if self.state() != NodeState::Candidate {
-            warn!("Node {} attempted to record vote for self but is not a candidate", self.id);
-            return;
+    fn leader_recalculate_commit_index(&mut self, total_nodes: usize) -> bool {
+        let current_commit_index = self.commit_index();
+        let mut highest_commitable_index = current_commit_index;
+        let majority = (total_nodes / 2) + 1;
+
+        // Iterate through log entries starting from the next commit index
+        for n in (current_commit_index + 1)..=self.log_last_index() {
+            match self.log.get((n - 1) as usize) {
+                // If the entry at index n is the current term, it is commitable.
+                Some(entry) if entry.term == self.current_term() => {
+                    let mut match_count = 0;
+                    // Iterate through follower match indices
+                    for follower_match_index in self.match_index.values() {
+                        if *follower_match_index >= n {
+                            match_count += 1;
+                        }
+                    }
+
+                    if match_count >= majority {
+                        highest_commitable_index = n;
+                    }
+                }
+                // Entry is from previous term.
+                Some(entry) => {
+                    debug!(
+                        "Node {} (Leader) skipping commit_index recalculation at {} (log_term: \
+                         {}, current_term: {})",
+                        self.id,
+                        n,
+                        entry.term,
+                        self.current_term()
+                    );
+                }
+                None => {
+                    error!(
+                        "Node {} (Leader) commit_index recalculation error: Log entry not found \
+                         at index {}",
+                        self.id, n
+                    );
+                    break;
+                }
+            }
         }
 
-        self.votes_received += 1;
-
-        info!(
-            "Node {} received vote from Node {}, total votes: {}",
-            self.id,
-            self.id,
-            self.votes_received()
-        );
+        // Update commit index if it has changed
+        if highest_commitable_index > current_commit_index {
+            info!(
+                "Node {} (Leader) updated commit_index from {} to {}",
+                self.id, current_commit_index, highest_commitable_index
+            );
+            self.commit_index = highest_commitable_index;
+            true
+        } else {
+            false
+        }
     }
 }

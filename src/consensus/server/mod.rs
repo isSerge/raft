@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use log::{debug, error, info, warn};
 use tokio::sync::broadcast;
@@ -20,6 +20,7 @@ pub struct NodeServer {
     pub state_machine: StateMachine,
     messenger: NodeMessenger,
     event_tx: broadcast::Sender<ConsensusEvent>,
+    pending_append_entries: HashMap<u64, (u64, usize)>,
 }
 
 // NodeServer constructor
@@ -30,7 +31,13 @@ impl NodeServer {
         messenger: NodeMessenger,
         event_tx: broadcast::Sender<ConsensusEvent>,
     ) -> Self {
-        Self { core: NodeCore::new(id), state_machine, messenger, event_tx }
+        Self {
+            core: NodeCore::new(id),
+            state_machine,
+            messenger,
+            event_tx,
+            pending_append_entries: HashMap::new(),
+        }
     }
 }
 
@@ -101,12 +108,8 @@ impl NodeServer {
         leader_id: u64,
         success: bool,
         term: u64,
-        last_appended_index: Option<u64>,
     ) -> Result<(), ConsensusError> {
-        // If append failed, don't send last_appended_index
-        let last_appended_index = if success { last_appended_index } else { None };
-        let msg =
-            Message::AppendResponse { term, success, from_id: self.id(), last_appended_index };
+        let msg = Message::AppendResponse { term, success, from_id: self.id() };
         info!("Node {} sending AppendResponse to leader {}: {:?}", self.id(), leader_id, msg);
         self.messenger.send_to(leader_id, Arc::new(msg)).await.map_err(ConsensusError::Transport)
     }
@@ -327,7 +330,7 @@ impl NodeServer {
                 leader_term,
                 self.current_term()
             );
-            return self.send_append_response(leader_id, false, self.current_term(), None).await;
+            return self.send_append_response(leader_id, false, self.current_term()).await;
         }
 
         // Leader is up to date
@@ -354,7 +357,7 @@ impl NodeServer {
                 self.id(),
                 leader_id
             );
-            return self.send_append_response(leader_id, false, self.current_term(), None).await;
+            return self.send_append_response(leader_id, false, self.current_term()).await;
         }
 
         // 5. Update commit_index
@@ -367,7 +370,7 @@ impl NodeServer {
         timer.reset_heartbeat_timer();
 
         // 8. Send response to leader
-        self.send_append_response(leader_id, true, self.current_term(), last_appended_index).await
+        self.send_append_response(leader_id, true, self.current_term()).await
     }
 
     /// Handle a vote response from a voter. Used by candidates to collect
@@ -474,31 +477,28 @@ impl NodeServer {
     /// determine if they have received a majority of responses.
     async fn handle_append_response(
         &mut self,
-        term: u64,
+        term: u64, // term from the follower
         success: bool,
-        follower_last_appended_index: Option<u64>,
         from_id: u64,
         timer: &mut NodeTimer,
     ) -> Result<(), ConsensusError> {
         info!(
-            "Node {} (Leader) received AppendResponse from follower {} for term {} (Success: {}, \
-             last_appended_index: {:?})",
+            "Node {} (Leader) received AppendResponse from follower {} for term {} (Success: {})",
             self.id(),
             from_id,
             term,
-            success,
-            follower_last_appended_index
+            success
         );
 
-        // 1. Perform checks
+        // Ignore if not leader
         if self.core.state() != NodeState::Leader {
-            debug!(
-                "Node {} (Leader) received AppendResponse but is no longer a Leader. Ignoring.",
-                self.id()
-            );
+            warn!("Node {} received AppendResponse but is no longer Leader. Ignoring.", self.id());
+            // Clear any potentially stale pending info for this follower
+            self.pending_append_entries.remove(&from_id);
             return Ok(());
         }
 
+        // If response contains higher term, convert to follower
         if term > self.current_term() {
             info!(
                 "Node {} (Leader) sees newer term {} in AppendResponse from follower {}, \
@@ -507,12 +507,14 @@ impl NodeServer {
                 term,
                 from_id
             );
-            // Convert to follower and reset election timer
+            // Clear pending info as we are no longer leader
+            self.pending_append_entries.clear();
             self.core.transition_to_follower(term);
             timer.reset_election_timer();
             return Ok(());
         }
 
+        // Ignore if response is for an older term (stale response)
         if term < self.current_term() {
             debug!(
                 "Node {} (Leader) received stale AppendResponse from Node {} for term {}. \
@@ -521,43 +523,67 @@ impl NodeServer {
                 from_id,
                 term
             );
+            // Do not clear pending info here, the follower might just be slow
             return Ok(());
         }
 
-        // 2. Update match index and next index
-        if success {
-            if let Some(last_appended_index) = follower_last_appended_index {
-                self.core.leader_update_match_index(from_id, last_appended_index);
+        // Retrieve pending info (simplification - assumes last sent RPC)
+        // Remove it AFTER processing below
+        let pending_info = self.pending_append_entries.get(&from_id).cloned();
 
-                if self.core.leader_update_commit_index(from_id).is_some() {
-                    // If commit index advanced, apply to *leader's* state machine
-                    self.apply_committed_entries();
+        // *** Added: Get total nodes for commit calculation ***
+        let total_nodes = match self.messenger.get_nodes_count().await {
+            Ok(count) => count,
+            Err(e) => {
+                error!(
+                    "Node {} (Leader) failed to get node count: {:?}. Cannot process response.",
+                    self.id(),
+                    e
+                );
+                // Clear pending info if we can't process
+                if pending_info.is_some() {
+                    self.pending_append_entries.remove(&from_id);
                 }
+                return Err(ConsensusError::Transport(e)); // Propagate error
+            }
+        };
+
+        // Process response for the current term
+        // *** MODIFIED: Calls core.leader_process_append_response with total_nodes ***
+        let (commit_advanced, _old_ci, _new_ci) =
+            if let Some((sent_prev_log_index, sent_entries_len)) = pending_info {
+                self.core.leader_process_append_response(
+                    from_id,
+                    success,
+                    sent_prev_log_index,
+                    sent_entries_len,
+                    total_nodes, // *** Pass total nodes count ***
+                )
             } else {
                 warn!(
-                    "Node {} (Leader) received AppendResponse from Node {} for term {} (Success: \
-                     {}, last_appended_index: {:?})",
+                    "Node {} (Leader) received AppendResponse from {} but no pending info found. \
+                     Ignoring update.",
                     self.id(),
-                    from_id,
-                    term,
-                    success,
-                    follower_last_appended_index
+                    from_id
                 );
-            }
-        } else {
-            // TODO: handle failed append
-            warn!(
-                "Node {} (Leader) received AppendResponse from Node {} for term {} (Success: {}, \
-                 last_appended_index: {:?})",
-                self.id(),
-                from_id,
-                term,
-                success,
-                follower_last_appended_index
-            );
+                (false, self.commit_index(), self.commit_index()) // No change
+            };
+
+        // If success=false, nextIndex was decremented in
+        // core.leader_process_append_response. A full implementation might
+        // immediately retry sending AE to this follower. We rely on the next
+        // heartbeat for simplicity.
+
+        // *** MODIFIED: Apply based on actual commit advancement result ***
+        if commit_advanced {
+            self.apply_committed_entries();
         }
 
-        // TODO: Trigger resend if success was false and next_index was decremented
+        // Clear pending info now that response is processed
+        // (only if we actually used it - check pending_info was Some)
+        if pending_info.is_some() {
+            self.pending_append_entries.remove(&from_id);
+        }
 
         Ok(())
     }
@@ -634,9 +660,8 @@ impl NodeServer {
                 )
                 .await?;
             }
-            Message::AppendResponse { term, success, from_id, last_appended_index } => {
-                self.handle_append_response(term, success, last_appended_index, from_id, timer)
-                    .await?;
+            Message::AppendResponse { term, success, from_id } => {
+                self.handle_append_response(term, success, from_id, timer).await?;
             }
             Message::StartElectionCmd => {
                 info!("Node {} received StartElectionCmd", self.id());
