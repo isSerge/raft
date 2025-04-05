@@ -188,7 +188,7 @@ async fn main() -> Result<(), ConsensusError> {
     info!("Simulation: Waiting for entry committed event...");
     wait_for_event(
         &mut event_rx,
-        ConsensusEvent::EntryCommitted { index: 0, entry: "Hello, world!".to_string() },
+        ConsensusEvent::EntryCommitted { index: 1, entry: "Hello, world!".to_string() },
         Duration::from_secs(10),
     )
     .await?;
