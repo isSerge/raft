@@ -607,7 +607,7 @@ impl NodeCore {
             match self.log.get((n - 1) as usize) {
                 // If the entry at index n is the current term, it is commitable.
                 Some(entry) if entry.term == self.current_term() => {
-                    let mut match_count = 0;
+                    let mut match_count = 1; // Count the leader itself
                     // Iterate through follower match indices
                     for follower_match_index in self.match_index.values() {
                         if *follower_match_index >= n {
