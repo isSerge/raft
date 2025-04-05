@@ -230,74 +230,6 @@ fn test_core_follower_update_commit_index_failure() {
 }
 
 #[test]
-fn test_core_leader_update_commit_index_success() {
-    let mut core = NodeCore::new(NODE_ID);
-    const FOLLOWER_ID: u64 = 1;
-
-    // Setup: transition to leader and add some log entries
-    core.transition_to_candidate();
-    core.transition_to_leader(&[NODE_ID]);
-    core.leader_append_entry("test1".to_string());
-    core.leader_append_entry("test2".to_string());
-
-    // Initial state
-    assert_eq!(core.commit_index(), 0);
-    assert_eq!(core.log_last_index(), 2);
-
-    // Test successful update
-    let result = core.leader_update_commit_index(FOLLOWER_ID);
-    assert_eq!(result, Some((0, 2)));
-    assert_eq!(core.commit_index(), 2);
-}
-
-#[test]
-fn test_core_leader_update_commit_index_no_change() {
-    let mut core = NodeCore::new(NODE_ID);
-    const FOLLOWER_ID: u64 = 1;
-
-    // Setup: transition to leader and add some log entries
-    core.transition_to_candidate();
-    core.transition_to_leader(&[NODE_ID]);
-    core.leader_append_entry("test1".to_string());
-    core.leader_append_entry("test2".to_string());
-    core.commit_index = 2; // Set commit index to log length
-
-    // Test update when commit index is already at log length
-    let result = core.leader_update_commit_index(FOLLOWER_ID);
-    assert_eq!(result, None);
-    assert_eq!(core.commit_index(), 2);
-}
-
-#[test]
-#[ignore = "Currently never fails, update is optimistic"]
-fn test_core_leader_update_commit_index_failure() {
-    let mut core = NodeCore::new(NODE_ID);
-    const FOLLOWER_ID: u64 = 1;
-
-    // Setup: transition to leader and add some log entries
-    core.transition_to_candidate();
-    core.transition_to_leader(&[NODE_ID]);
-    core.leader_append_entry("test1".to_string());
-    core.leader_append_entry("test2".to_string());
-
-    // Test failed append entries
-    let result = core.leader_update_commit_index(FOLLOWER_ID);
-    assert_eq!(result, None);
-    assert_eq!(core.commit_index(), 0);
-}
-
-#[test]
-fn test_core_leader_update_commit_index_not_leader() {
-    let mut core = NodeCore::new(NODE_ID);
-    const FOLLOWER_ID: u64 = 1;
-
-    // Test when not in leader state
-    let result = core.leader_update_commit_index(FOLLOWER_ID);
-    assert_eq!(result, None);
-    assert_eq!(core.commit_index(), 0);
-}
-
-#[test]
 fn test_core_follower_append_entries() {
     let mut core = NodeCore::new(NODE_ID);
     const TERM: u64 = 1;
@@ -424,4 +356,211 @@ fn test_core_leader_append_entry_not_leader() {
     let success = core.leader_append_entry("test".to_string());
     assert!(!success);
     assert_eq!(core.log().len(), 0);
+}
+
+#[test]
+fn test_core_leader_recalculate_commit_index_no_change() {
+    let mut core = NodeCore::new(NODE_ID);
+    const TOTAL_NODES: usize = 3;
+
+    // Setup: transition to leader and add some log entries
+    core.transition_to_candidate();
+    core.transition_to_leader(&[NODE_ID, 1, 2]);
+
+    // Add log entries from current term
+    core.leader_append_entry("test1".to_string());
+    core.leader_append_entry("test2".to_string());
+
+    // Set match indices for followers (not enough for majority)
+    core.match_index.insert(1, 0);
+    core.match_index.insert(2, 0);
+
+    // Initial state
+    assert_eq!(core.commit_index(), 0);
+    assert_eq!(core.log_last_index(), 2);
+
+    // Test recalculation with no change
+    let changed = core.leader_recalculate_commit_index(TOTAL_NODES);
+    assert!(!changed);
+    assert_eq!(core.commit_index(), 0);
+}
+
+#[test]
+fn test_core_leader_recalculate_commit_index_with_change() {
+    let mut core = NodeCore::new(NODE_ID);
+    const TOTAL_NODES: usize = 3;
+
+    // Setup: transition to leader and add some log entries
+    core.transition_to_candidate();
+    core.transition_to_leader(&[NODE_ID, 1, 2]);
+
+    // Add log entries from current term
+    core.leader_append_entry("test1".to_string());
+    core.leader_append_entry("test2".to_string());
+
+    // Set match indices for followers (enough for majority)
+    core.match_index.insert(1, 1);
+    core.match_index.insert(2, 1);
+
+    // Initial state
+    assert_eq!(core.commit_index(), 0);
+    assert_eq!(core.log_last_index(), 2);
+
+    // Test recalculation with change
+    let changed = core.leader_recalculate_commit_index(TOTAL_NODES);
+    assert!(changed);
+    assert_eq!(core.commit_index(), 1);
+}
+
+#[test]
+fn test_core_leader_recalculate_commit_index_with_previous_term_entries() {
+    let mut core = NodeCore::new(NODE_ID);
+    const TOTAL_NODES: usize = 3;
+    const PREVIOUS_TERM: u64 = 1;
+
+    // Setup: transition to leader
+    core.transition_to_candidate();
+    core.transition_to_leader(&[NODE_ID, 1, 2]);
+
+    // Add log entries from previous term
+    core.log.push(LogEntry::new(PREVIOUS_TERM, "test1".to_string()));
+    core.log.push(LogEntry::new(PREVIOUS_TERM, "test2".to_string()));
+
+    // Add log entry from current term
+    core.leader_append_entry("test3".to_string());
+
+    // Set match indices for followers (enough for majority)
+    core.match_index.insert(1, 2);
+    core.match_index.insert(2, 2);
+
+    // Initial state
+    assert_eq!(core.commit_index(), 0);
+    assert_eq!(core.log_last_index(), 3);
+
+    // Test recalculation with change
+    let changed = core.leader_recalculate_commit_index(TOTAL_NODES);
+    assert!(changed);
+    assert_eq!(core.commit_index(), 2);
+}
+
+#[test]
+fn test_core_leader_recalculate_commit_index_with_mixed_term_entries() {
+    let mut core = NodeCore::new(NODE_ID);
+    const TOTAL_NODES: usize = 3;
+    const PREVIOUS_TERM: u64 = 1;
+
+    // Setup: transition to leader
+    core.transition_to_candidate();
+    core.transition_to_leader(&[NODE_ID, 1, 2]);
+
+    // Add log entries from previous term
+    core.log.push(LogEntry::new(PREVIOUS_TERM, "test1".to_string()));
+    core.log.push(LogEntry::new(PREVIOUS_TERM, "test2".to_string()));
+
+    // Add log entries from current term
+    core.leader_append_entry("test3".to_string());
+    core.leader_append_entry("test4".to_string());
+
+    // Set match indices for followers (enough for majority for first current term
+    // entry)
+    core.match_index.insert(1, 3);
+    core.match_index.insert(2, 3);
+
+    // Initial state
+    assert_eq!(core.commit_index(), 0);
+    assert_eq!(core.log_last_index(), 4);
+
+    // Test recalculation with change
+    let changed = core.leader_recalculate_commit_index(TOTAL_NODES);
+    assert!(changed);
+    assert_eq!(core.commit_index(), 3);
+}
+
+#[test]
+fn test_core_leader_recalculate_commit_index_with_odd_number_of_nodes() {
+    let mut core = NodeCore::new(NODE_ID);
+    const TOTAL_NODES: usize = 5; // 5 nodes, need 3 for majority
+
+    // Setup: transition to leader
+    core.transition_to_candidate();
+    core.transition_to_leader(&[NODE_ID, 1, 2, 3, 4]);
+
+    // Add log entries from current term
+    core.leader_append_entry("test1".to_string());
+    core.leader_append_entry("test2".to_string());
+
+    // Set match indices for followers (exactly majority)
+    // We need 3 nodes (including leader) to have the entry at index 1
+    // Leader has all entries, so we need 2 more followers
+    core.match_index.insert(1, 1);
+    core.match_index.insert(2, 1);
+    core.match_index.insert(3, 0);
+    core.match_index.insert(4, 0);
+
+    // Initial state
+    assert_eq!(core.commit_index(), 0);
+    assert_eq!(core.log_last_index(), 2);
+
+    // Test recalculation with change
+    let changed = core.leader_recalculate_commit_index(TOTAL_NODES);
+    assert!(changed);
+    assert_eq!(core.commit_index(), 1);
+}
+
+#[test]
+fn test_core_leader_recalculate_commit_index_with_even_number_of_nodes() {
+    let mut core = NodeCore::new(NODE_ID);
+    const TOTAL_NODES: usize = 4; // 4 nodes, need 3 for majority
+
+    // Setup: transition to leader
+    core.transition_to_candidate();
+    core.transition_to_leader(&[NODE_ID, 1, 2, 3]);
+
+    // Add log entries from current term
+    core.leader_append_entry("test1".to_string());
+    core.leader_append_entry("test2".to_string());
+
+    // Set match indices for followers (exactly majority)
+    // We need 3 nodes (including leader) to have the entry at index 1
+    // Leader has all entries, so we need 2 more followers
+    core.match_index.insert(1, 1);
+    core.match_index.insert(2, 1);
+    core.match_index.insert(3, 0);
+
+    // Initial state
+    assert_eq!(core.commit_index(), 0);
+    assert_eq!(core.log_last_index(), 2);
+
+    // Test recalculation with change
+    let changed = core.leader_recalculate_commit_index(TOTAL_NODES);
+    assert!(changed);
+    assert_eq!(core.commit_index(), 1);
+}
+
+#[test]
+fn test_core_leader_recalculate_commit_index_with_minimal_majority() {
+    let mut core = NodeCore::new(NODE_ID);
+    const TOTAL_NODES: usize = 3; // 3 nodes, need 2 for majority
+
+    // Setup: transition to leader
+    core.transition_to_candidate();
+    core.transition_to_leader(&[NODE_ID, 1, 2]);
+
+    // Add log entries from current term
+    core.leader_append_entry("test1".to_string());
+
+    // Set match indices for followers (exactly majority)
+    // We need 2 nodes (including leader) to have the entry at index 1
+    // Leader has all entries, so we need 1 more follower
+    core.match_index.insert(1, 1);
+    core.match_index.insert(2, 0);
+
+    // Initial state
+    assert_eq!(core.commit_index(), 0);
+    assert_eq!(core.log_last_index(), 1);
+
+    // Test recalculation with change
+    let changed = core.leader_recalculate_commit_index(TOTAL_NODES);
+    assert!(changed);
+    assert_eq!(core.commit_index(), 1);
 }
