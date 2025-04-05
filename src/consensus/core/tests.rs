@@ -4,6 +4,21 @@ use crate::consensus::{
 };
 
 const NODE_ID: u64 = 0;
+const PEER_ID: u64 = 1;
+const PEER_ID_2: u64 = 2;
+const PEER_ID_3: u64 = 3;
+const PEER_ID_4: u64 = 4;
+
+// --- Helper function to create a leader core for tests ---
+fn setup_leader_core(id: u64, term: u64, log: Vec<LogEntry>, peers: &[u64]) -> NodeCore {
+    let mut core = NodeCore::new(id);
+    core.current_term = term;
+    core.log = log;
+    // Mimic transition without needing Candidate state votes
+    core.state = NodeState::Leader;
+    core.initialize_leader_state(peers);
+    core
+}
 
 #[test]
 fn test_core_transition_to_candidate_and_vote_for_self() {
@@ -334,12 +349,8 @@ fn test_core_record_vote_received_not_candidate() {
 
 #[test]
 fn test_core_leader_append_entry() {
-    let mut core = NodeCore::new(NODE_ID);
     const TERM: u64 = 1;
-
-    // Setup: transition to leader
-    core.transition_to_candidate();
-    core.transition_to_leader(&[NODE_ID]);
+    let mut core = setup_leader_core(NODE_ID, TERM, vec![], &[PEER_ID]);
 
     // Test successful append
     let success = core.leader_append_entry("test".to_string());
@@ -360,20 +371,16 @@ fn test_core_leader_append_entry_not_leader() {
 
 #[test]
 fn test_core_leader_recalculate_commit_index_no_change() {
-    let mut core = NodeCore::new(NODE_ID);
     const TOTAL_NODES: usize = 3;
-
-    // Setup: transition to leader and add some log entries
-    core.transition_to_candidate();
-    core.transition_to_leader(&[NODE_ID, 1, 2]);
+    let mut core = setup_leader_core(NODE_ID, 1, vec![], &[PEER_ID, PEER_ID_2, PEER_ID_3]);
 
     // Add log entries from current term
     core.leader_append_entry("test1".to_string());
     core.leader_append_entry("test2".to_string());
 
     // Set match indices for followers (not enough for majority)
-    core.match_index.insert(1, 0);
-    core.match_index.insert(2, 0);
+    core.match_index.insert(PEER_ID, 0);
+    core.match_index.insert(PEER_ID_2, 0);
 
     // Initial state
     assert_eq!(core.commit_index(), 0);
@@ -387,20 +394,16 @@ fn test_core_leader_recalculate_commit_index_no_change() {
 
 #[test]
 fn test_core_leader_recalculate_commit_index_with_change() {
-    let mut core = NodeCore::new(NODE_ID);
     const TOTAL_NODES: usize = 3;
-
-    // Setup: transition to leader and add some log entries
-    core.transition_to_candidate();
-    core.transition_to_leader(&[NODE_ID, 1, 2]);
+    let mut core = setup_leader_core(NODE_ID, 1, vec![], &[PEER_ID, PEER_ID_2, PEER_ID_3]);
 
     // Add log entries from current term
     core.leader_append_entry("test1".to_string());
     core.leader_append_entry("test2".to_string());
 
     // Set match indices for followers (enough for majority)
-    core.match_index.insert(1, 1);
-    core.match_index.insert(2, 1);
+    core.match_index.insert(PEER_ID, 1);
+    core.match_index.insert(PEER_ID_2, 1);
 
     // Initial state
     assert_eq!(core.commit_index(), 0);
@@ -414,13 +417,9 @@ fn test_core_leader_recalculate_commit_index_with_change() {
 
 #[test]
 fn test_core_leader_recalculate_commit_index_with_previous_term_entries() {
-    let mut core = NodeCore::new(NODE_ID);
     const TOTAL_NODES: usize = 3;
     const PREVIOUS_TERM: u64 = 1;
-
-    // Setup: transition to leader
-    core.transition_to_candidate();
-    core.transition_to_leader(&[NODE_ID, 1, 2]);
+    let mut core = setup_leader_core(NODE_ID, 1, vec![], &[PEER_ID, PEER_ID_2, PEER_ID_3]);
 
     // Add log entries from previous term
     core.log.push(LogEntry::new(PREVIOUS_TERM, "test1".to_string()));
@@ -430,8 +429,8 @@ fn test_core_leader_recalculate_commit_index_with_previous_term_entries() {
     core.leader_append_entry("test3".to_string());
 
     // Set match indices for followers (enough for majority)
-    core.match_index.insert(1, 2);
-    core.match_index.insert(2, 2);
+    core.match_index.insert(PEER_ID, 2);
+    core.match_index.insert(PEER_ID_2, 2);
 
     // Initial state
     assert_eq!(core.commit_index(), 0);
@@ -445,13 +444,9 @@ fn test_core_leader_recalculate_commit_index_with_previous_term_entries() {
 
 #[test]
 fn test_core_leader_recalculate_commit_index_with_mixed_term_entries() {
-    let mut core = NodeCore::new(NODE_ID);
     const TOTAL_NODES: usize = 3;
     const PREVIOUS_TERM: u64 = 1;
-
-    // Setup: transition to leader
-    core.transition_to_candidate();
-    core.transition_to_leader(&[NODE_ID, 1, 2]);
+    let mut core = setup_leader_core(NODE_ID, 1, vec![], &[PEER_ID, PEER_ID_2, PEER_ID_3]);
 
     // Add log entries from previous term
     core.log.push(LogEntry::new(PREVIOUS_TERM, "test1".to_string()));
@@ -463,8 +458,8 @@ fn test_core_leader_recalculate_commit_index_with_mixed_term_entries() {
 
     // Set match indices for followers (enough for majority for first current term
     // entry)
-    core.match_index.insert(1, 3);
-    core.match_index.insert(2, 3);
+    core.match_index.insert(PEER_ID, 3);
+    core.match_index.insert(PEER_ID_2, 3);
 
     // Initial state
     assert_eq!(core.commit_index(), 0);
@@ -478,12 +473,9 @@ fn test_core_leader_recalculate_commit_index_with_mixed_term_entries() {
 
 #[test]
 fn test_core_leader_recalculate_commit_index_with_odd_number_of_nodes() {
-    let mut core = NodeCore::new(NODE_ID);
     const TOTAL_NODES: usize = 5; // 5 nodes, need 3 for majority
-
-    // Setup: transition to leader
-    core.transition_to_candidate();
-    core.transition_to_leader(&[NODE_ID, 1, 2, 3, 4]);
+    let mut core =
+        setup_leader_core(NODE_ID, 1, vec![], &[PEER_ID, PEER_ID_2, PEER_ID_3, PEER_ID_4]);
 
     // Add log entries from current term
     core.leader_append_entry("test1".to_string());
@@ -492,10 +484,10 @@ fn test_core_leader_recalculate_commit_index_with_odd_number_of_nodes() {
     // Set match indices for followers (exactly majority)
     // We need 3 nodes (including leader) to have the entry at index 1
     // Leader has all entries, so we need 2 more followers
-    core.match_index.insert(1, 1);
-    core.match_index.insert(2, 1);
-    core.match_index.insert(3, 0);
-    core.match_index.insert(4, 0);
+    core.match_index.insert(PEER_ID, 1);
+    core.match_index.insert(PEER_ID_2, 1);
+    core.match_index.insert(PEER_ID_3, 0);
+    core.match_index.insert(PEER_ID_4, 0);
 
     // Initial state
     assert_eq!(core.commit_index(), 0);
@@ -509,12 +501,9 @@ fn test_core_leader_recalculate_commit_index_with_odd_number_of_nodes() {
 
 #[test]
 fn test_core_leader_recalculate_commit_index_with_even_number_of_nodes() {
-    let mut core = NodeCore::new(NODE_ID);
     const TOTAL_NODES: usize = 4; // 4 nodes, need 3 for majority
-
-    // Setup: transition to leader
-    core.transition_to_candidate();
-    core.transition_to_leader(&[NODE_ID, 1, 2, 3]);
+    let mut core =
+        setup_leader_core(NODE_ID, 1, vec![], &[PEER_ID, PEER_ID_2, PEER_ID_3, PEER_ID_4]);
 
     // Add log entries from current term
     core.leader_append_entry("test1".to_string());
@@ -523,9 +512,9 @@ fn test_core_leader_recalculate_commit_index_with_even_number_of_nodes() {
     // Set match indices for followers (exactly majority)
     // We need 3 nodes (including leader) to have the entry at index 1
     // Leader has all entries, so we need 2 more followers
-    core.match_index.insert(1, 1);
-    core.match_index.insert(2, 1);
-    core.match_index.insert(3, 0);
+    core.match_index.insert(PEER_ID, 1);
+    core.match_index.insert(PEER_ID_2, 1);
+    core.match_index.insert(PEER_ID_3, 0);
 
     // Initial state
     assert_eq!(core.commit_index(), 0);
@@ -539,12 +528,8 @@ fn test_core_leader_recalculate_commit_index_with_even_number_of_nodes() {
 
 #[test]
 fn test_core_leader_recalculate_commit_index_with_minimal_majority() {
-    let mut core = NodeCore::new(NODE_ID);
     const TOTAL_NODES: usize = 3; // 3 nodes, need 2 for majority
-
-    // Setup: transition to leader
-    core.transition_to_candidate();
-    core.transition_to_leader(&[NODE_ID, 1, 2]);
+    let mut core = setup_leader_core(NODE_ID, 1, vec![], &[PEER_ID, PEER_ID_2, PEER_ID_3]);
 
     // Add log entries from current term
     core.leader_append_entry("test1".to_string());
@@ -552,8 +537,8 @@ fn test_core_leader_recalculate_commit_index_with_minimal_majority() {
     // Set match indices for followers (exactly majority)
     // We need 2 nodes (including leader) to have the entry at index 1
     // Leader has all entries, so we need 1 more follower
-    core.match_index.insert(1, 1);
-    core.match_index.insert(2, 0);
+    core.match_index.insert(PEER_ID, 1);
+    core.match_index.insert(PEER_ID_2, 0);
 
     // Initial state
     assert_eq!(core.commit_index(), 0);
