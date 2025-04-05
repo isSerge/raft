@@ -371,8 +371,9 @@ fn test_core_leader_append_entry_not_leader() {
 
 #[test]
 fn test_core_leader_recalculate_commit_index_no_change() {
-    const TOTAL_NODES: usize = 3;
-    let mut core = setup_leader_core(NODE_ID, 1, vec![], &[PEER_ID, PEER_ID_2, PEER_ID_3]);
+    let peers = [PEER_ID, PEER_ID_2, PEER_ID_3];
+    let total_nodes = peers.len();
+    let mut core = setup_leader_core(NODE_ID, 1, vec![], &peers);
 
     // Add log entries from current term
     core.leader_append_entry("test1".to_string());
@@ -387,15 +388,16 @@ fn test_core_leader_recalculate_commit_index_no_change() {
     assert_eq!(core.log_last_index(), 2);
 
     // Test recalculation with no change
-    let changed = core.leader_recalculate_commit_index(TOTAL_NODES);
+    let changed = core.leader_recalculate_commit_index(total_nodes);
     assert!(!changed);
     assert_eq!(core.commit_index(), 0);
 }
 
 #[test]
 fn test_core_leader_recalculate_commit_index_with_change() {
-    const TOTAL_NODES: usize = 3;
-    let mut core = setup_leader_core(NODE_ID, 1, vec![], &[PEER_ID, PEER_ID_2, PEER_ID_3]);
+    let peers = [PEER_ID, PEER_ID_2, PEER_ID_3];
+    let total_nodes = peers.len();
+    let mut core = setup_leader_core(NODE_ID, 1, vec![], &peers);
 
     // Add log entries from current term
     core.leader_append_entry("test1".to_string());
@@ -410,16 +412,17 @@ fn test_core_leader_recalculate_commit_index_with_change() {
     assert_eq!(core.log_last_index(), 2);
 
     // Test recalculation with change
-    let changed = core.leader_recalculate_commit_index(TOTAL_NODES);
+    let changed = core.leader_recalculate_commit_index(total_nodes);
     assert!(changed);
     assert_eq!(core.commit_index(), 1);
 }
 
 #[test]
 fn test_core_leader_recalculate_commit_index_with_previous_term_entries() {
-    const TOTAL_NODES: usize = 3;
     const PREVIOUS_TERM: u64 = 1;
-    let mut core = setup_leader_core(NODE_ID, 1, vec![], &[PEER_ID, PEER_ID_2, PEER_ID_3]);
+    let peers = [PEER_ID, PEER_ID_2, PEER_ID_3];
+    let total_nodes = peers.len();
+    let mut core = setup_leader_core(NODE_ID, 1, vec![], &peers);
 
     // Add log entries from previous term
     core.log.push(LogEntry::new(PREVIOUS_TERM, "test1".to_string()));
@@ -437,16 +440,17 @@ fn test_core_leader_recalculate_commit_index_with_previous_term_entries() {
     assert_eq!(core.log_last_index(), 3);
 
     // Test recalculation with change
-    let changed = core.leader_recalculate_commit_index(TOTAL_NODES);
+    let changed = core.leader_recalculate_commit_index(total_nodes);
     assert!(changed);
     assert_eq!(core.commit_index(), 2);
 }
 
 #[test]
 fn test_core_leader_recalculate_commit_index_with_mixed_term_entries() {
-    const TOTAL_NODES: usize = 3;
     const PREVIOUS_TERM: u64 = 1;
-    let mut core = setup_leader_core(NODE_ID, 1, vec![], &[PEER_ID, PEER_ID_2, PEER_ID_3]);
+    let peers = [PEER_ID, PEER_ID_2, PEER_ID_3];
+    let total_nodes = peers.len();
+    let mut core = setup_leader_core(NODE_ID, 1, vec![], &peers);
 
     // Add log entries from previous term
     core.log.push(LogEntry::new(PREVIOUS_TERM, "test1".to_string()));
@@ -466,16 +470,16 @@ fn test_core_leader_recalculate_commit_index_with_mixed_term_entries() {
     assert_eq!(core.log_last_index(), 4);
 
     // Test recalculation with change
-    let changed = core.leader_recalculate_commit_index(TOTAL_NODES);
+    let changed = core.leader_recalculate_commit_index(total_nodes);
     assert!(changed);
     assert_eq!(core.commit_index(), 3);
 }
 
 #[test]
 fn test_core_leader_recalculate_commit_index_with_odd_number_of_nodes() {
-    const TOTAL_NODES: usize = 5; // 5 nodes, need 3 for majority
-    let mut core =
-        setup_leader_core(NODE_ID, 1, vec![], &[PEER_ID, PEER_ID_2, PEER_ID_3, PEER_ID_4]);
+    let peers = [PEER_ID, PEER_ID_2, PEER_ID_3, PEER_ID_4];
+    let total_nodes = peers.len();
+    let mut core = setup_leader_core(NODE_ID, 1, vec![], &peers);
 
     // Add log entries from current term
     core.leader_append_entry("test1".to_string());
@@ -494,16 +498,16 @@ fn test_core_leader_recalculate_commit_index_with_odd_number_of_nodes() {
     assert_eq!(core.log_last_index(), 2);
 
     // Test recalculation with change
-    let changed = core.leader_recalculate_commit_index(TOTAL_NODES);
+    let changed = core.leader_recalculate_commit_index(total_nodes);
     assert!(changed);
     assert_eq!(core.commit_index(), 1);
 }
 
 #[test]
 fn test_core_leader_recalculate_commit_index_with_even_number_of_nodes() {
-    const TOTAL_NODES: usize = 4; // 4 nodes, need 3 for majority
-    let mut core =
-        setup_leader_core(NODE_ID, 1, vec![], &[PEER_ID, PEER_ID_2, PEER_ID_3, PEER_ID_4]);
+    let peers = [PEER_ID, PEER_ID_2, PEER_ID_3, PEER_ID_4];
+    let total_nodes = peers.len();
+    let mut core = setup_leader_core(NODE_ID, 1, vec![], &peers);
 
     // Add log entries from current term
     core.leader_append_entry("test1".to_string());
@@ -521,15 +525,16 @@ fn test_core_leader_recalculate_commit_index_with_even_number_of_nodes() {
     assert_eq!(core.log_last_index(), 2);
 
     // Test recalculation with change
-    let changed = core.leader_recalculate_commit_index(TOTAL_NODES);
+    let changed = core.leader_recalculate_commit_index(total_nodes);
     assert!(changed);
     assert_eq!(core.commit_index(), 1);
 }
 
 #[test]
 fn test_core_leader_recalculate_commit_index_with_minimal_majority() {
-    const TOTAL_NODES: usize = 3; // 3 nodes, need 2 for majority
-    let mut core = setup_leader_core(NODE_ID, 1, vec![], &[PEER_ID, PEER_ID_2, PEER_ID_3]);
+    let peers = [NODE_ID, PEER_ID, PEER_ID_2];
+    let total_nodes = peers.len();
+    let mut core = setup_leader_core(NODE_ID, 1, vec![], &peers);
 
     // Add log entries from current term
     core.leader_append_entry("test1".to_string());
@@ -545,7 +550,178 @@ fn test_core_leader_recalculate_commit_index_with_minimal_majority() {
     assert_eq!(core.log_last_index(), 1);
 
     // Test recalculation with change
-    let changed = core.leader_recalculate_commit_index(TOTAL_NODES);
+    let changed = core.leader_recalculate_commit_index(total_nodes);
     assert!(changed);
     assert_eq!(core.commit_index(), 1);
+}
+
+#[test]
+fn test_core_leader_process_response_not_leader() {
+    let mut core = NodeCore::new(NODE_ID);
+    let peers = [NODE_ID, PEER_ID];
+    let total_nodes = peers.len();
+
+    // Add some state that shouldn't change
+    core.commit_index = 1;
+    core.next_index.insert(PEER_ID, 2);
+    core.match_index.insert(PEER_ID, 1);
+
+    // Action: Call function when not leader
+    let (advanced, old_ci, new_ci) =
+        core.leader_process_append_response(PEER_ID, true, 0, 1, total_nodes);
+
+    // Assertions: No change
+    assert!(!advanced);
+    assert_eq!(old_ci, 1);
+    assert_eq!(new_ci, 1);
+    assert_eq!(core.commit_index(), 1);
+    assert_eq!(core.next_index_for(PEER_ID), Some(2));
+    assert_eq!(core.match_index_for(PEER_ID), Some(1));
+}
+
+#[test]
+fn test_core_leader_process_response_success_no_commit() {
+    let peers = [NODE_ID, PEER_ID, PEER_ID_2]; // 3 nodes, majority = 2
+    let total_nodes = peers.len();
+    let log = vec![LogEntry::new(1, "cmd1".into()), LogEntry::new(1, "cmd2".into())];
+    let mut core = setup_leader_core(NODE_ID, 1, log, &peers);
+
+    // Initial state: commit=0, match[1]=0, next[1]=3, match[2]=0, next[2]=3
+    assert_eq!(core.commit_index(), 0);
+    assert_eq!(core.match_index_for(PEER_ID), Some(0));
+    assert_eq!(core.next_index_for(PEER_ID), Some(3));
+    assert_eq!(core.match_index_for(PEER_ID_2), Some(0));
+    assert_eq!(core.next_index_for(PEER_ID_2), Some(3));
+
+    // Action: PEER_ID successfully appends entries up to index 2 (sent
+    // prev=0, len=2)
+    let (advanced, old_ci, new_ci) =
+        core.leader_process_append_response(PEER_ID, true, 0, 2, total_nodes);
+
+    // Assertions:
+    // After PEER_ID matches index 2, the leader (match=2) and PEER_ID
+    // (match=2) form a majority for index 1 and 2. Both entries are term 1
+    // (current term). Commit should advance to 2.
+    assert!(advanced); // Commit index should advance
+    assert_eq!(old_ci, 0);
+    assert_eq!(new_ci, 2);
+    assert_eq!(core.commit_index(), 2);
+    assert_eq!(core.match_index_for(PEER_ID), Some(2)); // Updated
+    assert_eq!(core.next_index_for(PEER_ID), Some(3)); // Updated (match + 1)
+    assert_eq!(core.match_index_for(PEER_ID_2), Some(0)); // Unchanged
+    assert_eq!(core.next_index_for(PEER_ID_2), Some(3)); // Unchanged
+}
+
+#[test]
+fn test_core_leader_process_response_success_triggers_commit() {
+    let peers = [NODE_ID, PEER_ID, PEER_ID_2]; // 3 nodes, majority = 2
+    let total_nodes = peers.len();
+    let log = vec![LogEntry::new(1, "cmd1".into()), LogEntry::new(1, "cmd2".into())];
+    let mut core = setup_leader_core(NODE_ID, 1, log, &peers);
+    core.match_index.insert(PEER_ID, 1); // Simulate PEER_ID already acked entry 1
+    core.next_index.insert(PEER_ID, 2);
+
+    // Initial state: commit=0, match[1]=1, next[1]=2, match[2]=0, next[2]=3
+    assert_eq!(core.commit_index(), 0);
+
+    // Action: PEER_2 successfully appends entries up to index 1 (sent prev=0,
+    // len=1)
+    let (advanced, old_ci, new_ci) =
+        core.leader_process_append_response(PEER_ID_2, true, 0, 1, total_nodes);
+
+    // Assertions:
+    // Now leader (match=2), PEER_ID (match=1), PEER_ID_2 (match=1).
+    // Majority (2) >= index 1 is met. Entry 1 is term 1 (current). Commit should
+    // advance.
+    assert!(advanced);
+    assert_eq!(old_ci, 0);
+    assert_eq!(new_ci, 1);
+    assert_eq!(core.commit_index(), 1);
+    assert_eq!(core.match_index_for(PEER_ID), Some(1)); // Unchanged by this response
+    assert_eq!(core.next_index_for(PEER_ID), Some(2)); // Unchanged by this response
+    assert_eq!(core.match_index_for(PEER_ID_2), Some(1)); // Updated
+    assert_eq!(core.next_index_for(PEER_ID_2), Some(2)); // Updated (match + 1)
+}
+
+#[test]
+fn test_core_leader_process_response_failure_decrements_next() {
+    let peers = [NODE_ID, PEER_ID, PEER_ID_2];
+    let total_nodes = peers.len();
+    let log = vec![LogEntry::new(1, "cmd1".into()), LogEntry::new(1, "cmd2".into())];
+    let mut core = setup_leader_core(NODE_ID, 1, log, &peers);
+
+    // Initial state: commit=0, match[1]=0, next[1]=3
+    let initial_next = core.next_index_for(PEER_ID).unwrap();
+    assert_eq!(initial_next, 3);
+    assert_eq!(core.commit_index(), 0);
+    assert_eq!(core.match_index_for(PEER_ID), Some(0));
+
+    // Action: PEER_ID fails to append
+    let (advanced, old_ci, new_ci) =
+        core.leader_process_append_response(PEER_ID, false, 1, 1, total_nodes);
+
+    // Assertions:
+    assert!(!advanced);
+    assert_eq!(old_ci, 0);
+    assert_eq!(new_ci, 0);
+    assert_eq!(core.commit_index(), 0); // No change
+    assert_eq!(core.match_index_for(PEER_ID), Some(0)); // No change
+    assert_eq!(core.next_index_for(PEER_ID), Some(initial_next - 1)); // Decremented
+    assert_eq!(core.next_index_for(PEER_ID), Some(2));
+}
+
+#[test]
+fn test_core_leader_process_response_failure_next_already_1() {
+    let peers = [NODE_ID, PEER_ID];
+    let total_nodes = peers.len();
+    let log = vec![LogEntry::new(1, "cmd1".into())];
+    let mut core = setup_leader_core(NODE_ID, 1, log, &peers);
+    core.next_index.insert(PEER_ID, 1); // Set next index to 1
+
+    // Initial state: commit=0, match[1]=0, next[1]=1
+    assert_eq!(core.next_index_for(PEER_ID), Some(1));
+    assert_eq!(core.commit_index(), 0);
+    assert_eq!(core.match_index_for(PEER_ID), Some(0));
+
+    // Action: PEER_ID fails to append
+    let (advanced, old_ci, new_ci) =
+        core.leader_process_append_response(PEER_ID, false, 0, 0, total_nodes);
+
+    // Assertions:
+    assert!(!advanced);
+    assert_eq!(old_ci, 0);
+    assert_eq!(new_ci, 0);
+    assert_eq!(core.commit_index(), 0); // No change
+    assert_eq!(core.match_index_for(PEER_ID), Some(0)); // No change
+    assert_eq!(core.next_index_for(PEER_ID), Some(1)); // Still 1, not decremented below 1
+}
+
+#[test]
+fn test_core_leader_process_response_success_stale() {
+    // Test receiving a success response for entries already matched or exceeded.
+    let peers = [NODE_ID, PEER_ID];
+    let total_nodes = peers.len();
+    let log = vec![LogEntry::new(1, "cmd1".into()), LogEntry::new(1, "cmd2".into())];
+    let mut core = setup_leader_core(NODE_ID, 1, log, &peers);
+    core.match_index.insert(PEER_ID, 2); // Peer already matches index 2
+    core.next_index.insert(PEER_ID, 3);
+
+    // Initial state: commit=0, match[1]=2, next[1]=3
+    assert_eq!(core.match_index_for(PEER_ID), Some(2));
+    assert_eq!(core.next_index_for(PEER_ID), Some(3));
+    assert_eq!(core.commit_index(), 0);
+
+    // Action: Receive a success response for having appended up to index 1 (sent
+    // prev=0, len=1) This is "stale" because we already know matchIndex is 2.
+    let (advanced, old_ci, new_ci) =
+        core.leader_process_append_response(PEER_ID, true, 0, 1, total_nodes);
+
+    // Assertions: Indices should not decrease, commit shouldn't change based on
+    // this stale info
+    assert!(!advanced); // No commit advancement triggered by stale info
+    assert_eq!(old_ci, 0);
+    assert_eq!(new_ci, 0); // Commit index remains 0
+    assert_eq!(core.commit_index(), 0);
+    assert_eq!(core.match_index_for(PEER_ID), Some(2)); // Match index did not decrease
+    assert_eq!(core.next_index_for(PEER_ID), Some(3)); // Next index reflects current match
 }

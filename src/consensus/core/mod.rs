@@ -303,10 +303,11 @@ impl NodeCore {
 
         if success {
             let new_match_index = prev_log_index + entries_len as u64;
-            let new_next_index = prev_log_index + 1;
+            let new_next_index = new_match_index + 1;
 
             let current_match_index = self.match_index.entry(from_id).or_insert(0);
 
+            // Only update match_index if the new value is greater than the current value
             if new_match_index > *current_match_index {
                 *current_match_index = new_match_index;
 
@@ -314,21 +315,28 @@ impl NodeCore {
                     "Node {} (Leader) updated match_index for {} from {} to {}",
                     self.id, from_id, *current_match_index, new_match_index
                 );
+
+                // Only update next_index and recalculate commit index if match_index was
+                // updated
+                self.next_index.insert(from_id, new_next_index);
+
+                debug!(
+                    "Node {} (Leader) updated next_index for {} to {}",
+                    self.id, from_id, new_next_index
+                );
+
+                self.leader_recalculate_commit_index(total_nodes);
+            } else {
+                debug!(
+                    "Node {} (Leader) received stale match_index update for {}: new={}, current={}",
+                    self.id, from_id, new_match_index, *current_match_index
+                );
             }
-
-            self.next_index.insert(from_id, new_next_index);
-
-            debug!(
-                "Node {} (Leader) updated next_index for {} to {}",
-                self.id, from_id, new_next_index
-            );
-
-            self.leader_recalculate_commit_index(total_nodes);
         } else {
             // Append failed. Decrement next_index for the follower.
             let current_next_index = self.next_index.entry(from_id).or_insert(0);
 
-            if *current_next_index > 0 {
+            if *current_next_index > 1 {
                 *current_next_index -= 1;
                 info!(
                     "Node {} (Leader) decremented next_index for {} to {}",
@@ -337,7 +345,7 @@ impl NodeCore {
                 // TODO: retry sending entries to the follower
             } else {
                 warn!(
-                    "Node {} (Leader) next_index for {} is 0. Cannot decrement further.",
+                    "Node {} (Leader) next_index for {} is 1. Cannot decrement further.",
                     self.id, from_id
                 );
             }
