@@ -348,79 +348,7 @@ impl NodeCore {
         (commit_has_advanced, old_commit_index, self.commit_index())
     }
 
-    /// Update the match index of the leader.
-    pub fn leader_update_match_index(
-        &mut self,
-        from_id: u64,
-        // success: bool,
-        // total_nodes: u64,
-        // Index of the last entry appended to the follower's log
-        follower_last_append_index: u64,
-    ) {
-        if self.state != NodeState::Leader {
-            warn!("Node {} tried to update match index but is not a Leader", self.id);
-            return;
-        }
-
-        // Update match index
-        let current_match_index = self.match_index.entry(from_id).or_insert(0);
-
-        if follower_last_append_index > *current_match_index {
-            *current_match_index = follower_last_append_index;
-
-            debug!(
-                "Node {} (Leader) updated match_index for {} from {} to {}",
-                self.id, from_id, *current_match_index, follower_last_append_index
-            );
-
-            // TODO: recalculate leader's commit index
-        }
-    }
-
-    /// Update the commit index of the leader.
-    // TODO: should calculate based on majority of match_index
-    pub fn leader_update_commit_index(&mut self, from_id: u64) -> Option<(u64, u64)> {
-        let potential_commit_index = self.log_last_index();
-
-        if potential_commit_index > self.commit_index() {
-            if let Some(entry_to_commit) = self.log.get((potential_commit_index - 1) as usize) {
-                if entry_to_commit.term == self.current_term() {
-                    let old_commit = self.commit_index();
-                    info!(
-                        "Node {} (Leader) updated commit_index from {} to {} (from {})",
-                        self.id, old_commit, potential_commit_index, from_id
-                    );
-                    self.commit_index = potential_commit_index;
-
-                    Some((old_commit, self.commit_index()))
-                } else {
-                    warn!(
-                        "Node {} (Leader) attempted to update commit_index but found conflicting \
-                         term",
-                        self.id
-                    );
-                    None
-                }
-            } else {
-                warn!(
-                    "Node {} (Leader) attempted to update commit_index but found no matching \
-                     entry to commit",
-                    self.id
-                );
-                None
-            }
-        } else {
-            debug!(
-                "Node {} (Leader) commit_index is up to date at {}",
-                self.id,
-                self.commit_index()
-            );
-            None
-        }
-    }
-
     /// Check if the log is consistent with another log.
-    // TODO: Implement this.
     fn check_log_consistency(&self, prev_log_index: u64, prev_log_term: u64) -> bool {
         if prev_log_index == 0 {
             // Base case: Leader is sending entries from the beginning. Always consistent.
