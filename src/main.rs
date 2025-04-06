@@ -103,15 +103,13 @@ async fn main() -> Result<(), ConsensusError> {
             info!("Simulation: Start processing messages for node {}", node_server_id);
 
             loop {
-                // Acquire lock for processing single message
-                let mut node_locked = node_server_arc.lock().await;
-                // let msg = node_locked.receive_message().await;
-
                 tokio::select! {
                   msg = node_receiver.receive() => {
                     match msg {
                       Ok(msg) => {
                         debug!("Simulation: Node {} received message: {:?}", node_server_id, msg.clone());
+                        // Acquire lock for processing single message
+                        let mut node_locked = node_server_arc.lock().await;
                         // Process message
                         let step_result = node_locked.process_message(msg.clone(), &mut timer).await;
 
@@ -140,7 +138,8 @@ async fn main() -> Result<(), ConsensusError> {
                   // Wrap lock acquisition and await in an async block
                   timer_event = timer.wait_for_timer_and_emit_event() => {
                     debug!("Simulation: Node {} timer event triggered: {:?}", node_server_id, timer_event);
-
+                    // Acquire lock for processing timer event
+                    let mut node_locked = node_server_arc.lock().await;
                     // This still requires the NodeServer lock
                     let result = node_locked.handle_timer_event(timer_event, &mut timer).await;
 
@@ -154,7 +153,6 @@ async fn main() -> Result<(), ConsensusError> {
                   }
                 }
 
-                drop(node_locked);
                 tokio::task::yield_now().await;
             }
         });
