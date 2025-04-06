@@ -113,6 +113,8 @@ async fn main() -> Result<(), ConsensusError> {
                         // Process message
                         let step_result = node_locked.process_message(msg.clone(), &mut timer).await;
 
+                        drop(node_locked);
+
                         match step_result {
                           Ok(()) => {
                             debug!("Simulation: Node {} finished step successfully.", node_server_id);
@@ -142,6 +144,8 @@ async fn main() -> Result<(), ConsensusError> {
                     let mut node_locked = node_server_arc.lock().await;
                     // This still requires the NodeServer lock
                     let result = node_locked.handle_timer_event(timer_event, &mut timer).await;
+
+                    drop(node_locked);
 
                     if let Err(e) = result {
                       error!(
