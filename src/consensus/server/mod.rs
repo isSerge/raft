@@ -79,11 +79,6 @@ impl NodeServer {
         self.core.last_applied()
     }
 
-    /// Get the match index for a peer.
-    pub fn match_index_for(&self, peer_id: u64) -> Option<u64> {
-        self.core.match_index_for(peer_id)
-    }
-
     /// Get the last log index.
     pub fn log_last_index(&self) -> u64 {
         self.core.log_last_index()
@@ -349,15 +344,8 @@ impl NodeServer {
         self.core.transition_to_follower(leader_term);
 
         // 4. Check log consistency and append log entries to own log
-        let initial_log_length = self.log().len();
-        let (is_log_consistent, log_modified) =
+        let (is_log_consistent, _) =
             self.core.follower_append_entries(prev_log_index, prev_log_term, new_entries);
-        let last_appended_index = if log_modified {
-            Some(self.log().len() as u64)
-        } else {
-            // If log was not modified, send back the last log index
-            Some(initial_log_length as u64)
-        };
 
         if !is_log_consistent {
             warn!(
