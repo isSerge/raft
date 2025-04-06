@@ -109,6 +109,7 @@ impl NodeCore {
     }
 
     /// Get the match index for a node.
+    #[cfg(test)]
     pub fn match_index_for(&self, follower_id: u64) -> Option<u64> {
         self.match_index.get(&follower_id).copied()
     }
@@ -159,12 +160,7 @@ impl NodeCore {
 
         self.votes_received += 1;
 
-        info!(
-            "Node {} received vote from Node {}, total votes: {}",
-            self.id,
-            self.id,
-            self.votes_received()
-        );
+        info!("Node {} recorded a received vote, total votes: {}", self.id, self.votes_received());
     }
 }
 
