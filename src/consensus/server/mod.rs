@@ -143,7 +143,7 @@ impl NodeServer {
     }
 
     /// Send an AppendEntries to all followers.
-    async fn send_append_entries_to_all_followers(&self) -> Result<(), ConsensusError> {
+    async fn send_append_entries_to_all_followers(&mut self) -> Result<(), ConsensusError> {
         if self.core.state() != NodeState::Leader {
             warn!("Node {} tried to send AppendEntries to followers but is not Leader", self.id());
             return Err(ConsensusError::NotLeader(self.id()));
@@ -174,7 +174,10 @@ impl NodeServer {
     }
 
     /// Send an AppendEntries to a follower.
-    async fn send_append_entries_to_follower(&self, peer_id: u64) -> Result<(), ConsensusError> {
+    async fn send_append_entries_to_follower(
+        &mut self,
+        peer_id: u64,
+    ) -> Result<(), ConsensusError> {
         if self.core.state() != NodeState::Leader {
             warn!(
                 "Node {} tried to send AppendEntries to follower {} but is not Leader",
@@ -204,6 +207,11 @@ impl NodeServer {
         } else {
             vec![] // No entries to send - sending heartbeat
         };
+
+        let entries_len = entries.len();
+
+        // store the entries length in the pending append entries map
+        self.pending_append_entries.insert(peer_id, (prev_log_index, entries_len));
 
         // Send message
         let msg = Message::AppendEntries {
@@ -589,7 +597,7 @@ impl NodeServer {
     }
 
     /// Send a heartbeat to all other nodes.
-    async fn send_heartbeat(&self) -> Result<(), ConsensusError> {
+    async fn send_heartbeat(&mut self) -> Result<(), ConsensusError> {
         info!("Node {} sending heartbeat to all other nodes", self.id());
         self.send_append_entries_to_all_followers().await
     }

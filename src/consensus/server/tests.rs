@@ -1001,7 +1001,7 @@ async fn test_node_process_message_start_election_cmd_already_leader() {
 #[tokio::test]
 async fn test_node_process_message_start_append_entries_cmd_as_leader() {
     let mut nodes = create_network(2).await;
-    let (node_leader, _, node_follower, follower_receiver) = get_two_nodes(&mut nodes);
+    let (node_leader, _, node_follower, _) = get_two_nodes(&mut nodes);
 
     // Prepare: transition the node to Candidate then Leader.
     node_leader.core.transition_to_candidate();
