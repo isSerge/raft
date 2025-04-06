@@ -420,7 +420,6 @@ impl NodeCore {
         }
 
         // 2. Handle potential conflicts and append new entries
-        // TODO: Implement conflict detection and log truncation
         let log_modified = self.find_conflicts_and_append(prev_log_index, entries);
 
         // Return true for consistency (as check passed), and whether log was modified
