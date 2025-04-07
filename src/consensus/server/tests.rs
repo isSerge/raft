@@ -12,8 +12,6 @@ use crate::{
     state_machine::StateMachine,
 };
 
-// TODO: refactor tests to reduce boilerplate
-
 /// Create a new node with a given id, messenger, and receiver.
 fn create_node(id: u64, node_messenger: NodeMessenger) -> NodeServer {
     NodeServer::new(id, StateMachine::new(), node_messenger, broadcast::channel(16).0)
@@ -847,10 +845,60 @@ async fn test_node_start_append_entries_rejects_if_not_leader() {
 }
 
 #[tokio::test]
-#[ignore = "Not implemented yet"]
 async fn test_node_handle_append_entries_rejects_on_inconsistent_log() {
-    // TODO: Implement this test once log consistency checks are implemented
-    unimplemented!("Test not implemented yet");
+    // Scenario: Follower receives AppendEntries with inconsistent log (term
+    // mismatch) and correctly rejects it.
+    let total_nodes = 2;
+    let mut nodes = create_network(total_nodes).await;
+    let (follower, _, leader, _) = get_two_nodes(&mut nodes);
+
+    // Setup: Make node 0 the leader, add a log entry
+    leader.core.transition_to_candidate(); // term 1
+    leader.core.leader_append_entry("cmd1".to_string()); // log index 1
+    leader.core.transition_to_leader(&[leader.id(), follower.id()]); // Initializes next/match
+    let term = leader.current_term(); // should be 1
+
+    // Setup: Make follower have a different term at the same index
+    follower.core.transition_to_candidate(); // term 1
+    follower.core.transition_to_follower(term); // back to follower in term 1
+
+    // Add a log entry to the follower's log
+    let (consistent, modified) =
+        follower.core.follower_append_entries(0, term, &[LogEntry::new(term, "cmd1".to_string())]);
+    assert!(consistent);
+    assert!(modified);
+
+    // Verify initial state
+    assert_eq!(follower.state(), NodeState::Follower);
+    assert_eq!(follower.current_term(), term);
+    assert_eq!(follower.log_last_index(), 1);
+    assert_eq!(follower.log_last_term(), 1);
+
+    // Action: Leader sends AppendEntries with a different term at index 1
+    let leader_id = leader.id();
+    let prev_log_index = 0;
+    let prev_log_term = 0;
+    let entries = vec![LogEntry::new(term, "cmd2".to_string())]; // term 1, different from follower's log
+    let leader_commit = 0;
+
+    // Process the message
+    let msg = Message::AppendEntries {
+        term,
+        leader_id,
+        entries: entries.clone(),
+        prev_log_index,
+        prev_log_term,
+        leader_commit,
+    };
+
+    let result = follower.process_message(Arc::new(msg), &mut create_timer()).await;
+    assert!(result.is_ok());
+
+    // Assertions: Follower should reject the append due to log inconsistency
+    // Follower's log should not have changed
+    assert_eq!(follower.log_last_index(), 1);
+    assert_eq!(follower.log_last_term(), 1);
+    assert_eq!(follower.log()[0].command, "cmd1");
 }
 
 #[tokio::test]
