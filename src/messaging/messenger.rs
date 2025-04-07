@@ -11,7 +11,6 @@ pub struct NodeMessenger {
     /// The ID of the node.
     id: u64,
     /// The network of the node.
-    // TODO: create abstraction for network
     network: Arc<Mutex<Network>>,
     /// The sender for the node.
     pub sender: mpsc::Sender<Arc<Message>>,
