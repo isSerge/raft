@@ -725,3 +725,106 @@ fn test_core_leader_process_response_success_stale() {
     assert_eq!(core.match_index_for(PEER_ID), Some(2)); // Match index did not decrease
     assert_eq!(core.next_index_for(PEER_ID), Some(3)); // Next index reflects current match
 }
+
+#[test]
+fn test_core_find_conflicts_and_append_empty_log() {
+    let mut core = NodeCore::new(NODE_ID);
+    let entries = vec![LogEntry::new(1, "cmd1".into()), LogEntry::new(1, "cmd2".into())];
+
+    // Test appending to an empty log
+    let modified = core.find_conflicts_and_append(0, &entries);
+
+    assert!(modified);
+    assert_eq!(core.log().len(), 2);
+    assert_eq!(core.log()[0].term, 1);
+    assert_eq!(core.log()[0].command, "cmd1");
+    assert_eq!(core.log()[1].term, 1);
+    assert_eq!(core.log()[1].command, "cmd2");
+}
+
+#[test]
+fn test_core_find_conflicts_and_append_no_conflict() {
+    let mut core = NodeCore::new(NODE_ID);
+    // Add initial entries
+    core.log.push(LogEntry::new(1, "cmd1".into()));
+    core.log.push(LogEntry::new(1, "cmd2".into()));
+
+    // New entries that don't conflict
+    let entries = vec![LogEntry::new(1, "cmd3".into()), LogEntry::new(1, "cmd4".into())];
+
+    // Test appending with no conflict
+    let modified = core.find_conflicts_and_append(2, &entries);
+
+    assert!(modified);
+    assert_eq!(core.log_last_index(), 4);
+    assert_eq!(core.log()[2].term, 1);
+    assert_eq!(core.log()[2].command, "cmd3");
+    assert_eq!(core.log()[3].term, 1);
+    assert_eq!(core.log()[3].command, "cmd4");
+}
+
+#[test]
+fn test_core_find_conflicts_and_append_with_conflict() {
+    let mut core = NodeCore::new(NODE_ID);
+    // Add initial entries
+    core.log.push(LogEntry::new(1, "cmd1".into()));
+    core.log.push(LogEntry::new(1, "cmd2".into()));
+    core.log.push(LogEntry::new(2, "cmd3".into())); // Different term
+
+    // New entries that conflict with existing entries
+    let entries = vec![LogEntry::new(1, "cmd4".into()), LogEntry::new(1, "cmd5".into())];
+
+    // Test appending with conflict
+    let modified = core.find_conflicts_and_append(1, &entries);
+
+    assert!(modified);
+    assert_eq!(core.log_last_index(), 3);
+    assert_eq!(core.log()[0].term, 1);
+    assert_eq!(core.log()[0].command, "cmd1");
+    assert_eq!(core.log()[1].term, 1);
+    assert_eq!(core.log()[1].command, "cmd2");
+    assert_eq!(core.log()[2].term, 1);
+    assert_eq!(core.log()[2].command, "cmd5");
+}
+
+#[test]
+fn test_core_find_conflicts_and_append_no_change() {
+    let mut core = NodeCore::new(NODE_ID);
+    // Add initial entries
+    core.log.push(LogEntry::new(1, "cmd1".into()));
+    core.log.push(LogEntry::new(1, "cmd2".into()));
+
+    // New entries that match existing entries
+    let entries = vec![LogEntry::new(1, "cmd2".into())];
+
+    // Test appending with no change (entries already exist)
+    let modified = core.find_conflicts_and_append(1, &entries);
+
+    assert!(!modified);
+    assert_eq!(core.log_last_index(), 2);
+    assert_eq!(core.log()[0].term, 1);
+    assert_eq!(core.log()[0].command, "cmd1");
+    assert_eq!(core.log()[1].term, 1);
+    assert_eq!(core.log()[1].command, "cmd2");
+}
+
+#[test]
+fn test_core_find_conflicts_and_append_beyond_log() {
+    let mut core = NodeCore::new(NODE_ID);
+    // Add initial entries
+    core.log.push(LogEntry::new(1, "cmd1".into()));
+    core.log.push(LogEntry::new(1, "cmd2".into()));
+
+    // New entries that go beyond the current log
+    let entries = vec![LogEntry::new(1, "cmd3".into()), LogEntry::new(1, "cmd4".into())];
+
+    // Test appending beyond the current log
+    let modified = core.find_conflicts_and_append(3, &entries);
+
+    assert!(modified);
+    assert_eq!(core.log_last_index(), 4);
+    assert_eq!(core.log()[2].term, 1);
+    assert_eq!(core.log()[2].command, "cmd3");
+    assert_eq!(core.log()[3].term, 1);
+    assert_eq!(core.log()[3].command, "cmd4");
+}
