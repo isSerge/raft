@@ -1412,3 +1412,135 @@ async fn test_handle_append_response_success_updates_match_next() {
     assert_eq!(leader.commit_index(), 0); // Need 2/2 matches for commit index 1
     assert!(!leader.pending_append_entries.contains_key(&follower_id)); // Pending info cleared
 }
+
+#[tokio::test]
+async fn test_handle_append_response_stale_term() {
+    // Scenario: Leader (term 2) receives response for older term (term 1). Should
+    // ignore.
+    let total_nodes = 2;
+    let mut nodes = create_network(total_nodes).await;
+
+    let (leader, _, follower, _) = get_two_nodes(&mut nodes);
+
+    // Setup: Leader term 2
+    leader.core.transition_to_candidate(); // term 1
+    leader.core.transition_to_follower(2); // force term 2
+    leader.core.transition_to_candidate(); // term 3
+    leader.core.transition_to_leader(&[leader.id(), follower.id()]); // leader in term 3
+    let current_term = leader.current_term(); // 3
+    let stale_term = current_term - 1; // 2
+
+    let initial_match = leader.match_index_for(follower.id()).unwrap();
+    let initial_next = leader.next_index_for(follower.id()).unwrap();
+
+    // Add pending info to see if it gets cleared (it shouldn't)
+    leader.pending_append_entries.insert(follower.id(), (0, 1));
+
+    // Action: Process response with stale term
+    let result =
+        leader.handle_append_response(stale_term, true, follower.id(), &mut create_timer()).await;
+    assert!(result.is_ok());
+
+    // Assertions: State unchanged, response ignored, pending info NOT cleared
+    assert_eq!(leader.state(), NodeState::Leader);
+    assert_eq!(leader.current_term(), current_term);
+    assert_eq!(leader.match_index_for(follower.id()).unwrap(), initial_match);
+    assert_eq!(leader.next_index_for(follower.id()).unwrap(), initial_next);
+    assert_eq!(leader.commit_index(), 0);
+    assert!(leader.pending_append_entries.contains_key(&follower.id())); // Pending info remains
+}
+
+#[tokio::test]
+async fn test_handle_append_response_future_term() {
+    // Scenario: Leader (term 1) receives response for future term (term 2). Should
+    // step down.
+    let total_nodes = 2;
+    let mut nodes = create_network(total_nodes).await;
+    let (leader, _, follower, _) = get_two_nodes(&mut nodes);
+
+    // Setup: Leader term 1
+    leader.core.transition_to_candidate(); // term 1
+    leader.core.transition_to_leader(&[leader.id(), follower.id()]);
+    let initial_term = leader.current_term(); // 1
+    let future_term = initial_term + 1; // 2
+
+    // Add pending info to see if it gets cleared (it should)
+    leader.pending_append_entries.insert(follower.id(), (0, 1));
+
+    // Action: Process response with future term (success flag doesn't matter)
+    let result =
+        leader.handle_append_response(future_term, false, follower.id(), &mut create_timer()).await;
+    assert!(result.is_ok());
+
+    // Assertions: State becomes Follower, term updated, pending info cleared
+    assert_eq!(leader.state(), NodeState::Follower);
+    assert_eq!(leader.current_term(), future_term);
+    assert!(leader.pending_append_entries.is_empty()); // All pending info cleared on step down
+}
+
+#[tokio::test]
+async fn test_handle_append_response_when_not_leader() {
+    // Scenario: Node is Follower, receives an AppendResponse. Should ignore.
+    let total_nodes = 2;
+    let mut nodes = create_network(total_nodes).await;
+    let (node, _, follower, _) = get_two_nodes(&mut nodes);
+
+    // Setup: Ensure node is Follower, add some dummy pending info
+    assert_eq!(node.state(), NodeState::Follower);
+    let initial_term = node.current_term(); // 0
+    node.pending_append_entries.insert(follower.id(), (0, 1));
+
+    // Action: Process AppendResponse while Follower
+    let result =
+        node.handle_append_response(initial_term, true, follower.id(), &mut create_timer()).await;
+    assert!(result.is_ok());
+
+    // Assertions: State remains Follower, term unchanged, pending info for that
+    // follower cleared
+    assert_eq!(node.state(), NodeState::Follower);
+    assert_eq!(node.current_term(), initial_term);
+    assert!(!node.pending_append_entries.contains_key(&follower.id())); // Clears for the specific follower
+}
+
+#[tokio::test]
+async fn test_handle_append_response_no_pending_info() {
+    // Scenario: Leader receives a response but has no pending info for it (e.g.,
+    // duplicate). Should ignore update.
+    let total_nodes = 2;
+    let mut nodes = create_network(total_nodes).await;
+    let (leader, _, follower, _) = get_two_nodes(&mut nodes);
+
+    // Setup: Leader term 1, NO pending info
+    leader.core.transition_to_candidate(); // term 1
+    leader.core.transition_to_leader(&[leader.id(), follower.id()]);
+    let term = leader.current_term();
+
+    let initial_match = leader.match_index_for(follower.id()).unwrap();
+    let initial_next = leader.next_index_for(follower.id()).unwrap();
+    assert!(!leader.pending_append_entries.contains_key(&follower.id())); // Verify no pending info
+
+    // Action: Process successful response from follower
+    let result =
+        leader.handle_append_response(term, true, follower.id(), &mut create_timer()).await;
+    assert!(result.is_ok());
+
+    // Assertions: Leader state, match/next/commit unchanged because no pending info
+    // was found
+    assert_eq!(leader.state(), NodeState::Leader);
+    assert_eq!(leader.match_index_for(follower.id()).unwrap(), initial_match); // Unchanged
+    assert_eq!(leader.next_index_for(follower.id()).unwrap(), initial_next); // Unchanged
+    assert_eq!(leader.commit_index(), 0);
+    assert!(!leader.pending_append_entries.contains_key(&follower.id())); // Still none
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_handle_append_response_success_advances_commit_n3() {
+    unimplemented!()
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_handle_append_response_failure_decrements_next() {
+    unimplemented!()
+}
