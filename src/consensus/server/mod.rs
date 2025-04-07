@@ -18,9 +18,8 @@ use crate::{
 pub struct NodeServer {
     /// The core state of the node.
     core: NodeCore,
-    // TODO: consider making state_machine private
     /// The state machine of the node.
-    pub state_machine: StateMachine,
+    state_machine: StateMachine,
     /// The messenger for the node.
     messenger: NodeMessenger,
     /// The event sender for the node.
