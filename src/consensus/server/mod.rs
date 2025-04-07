@@ -19,7 +19,7 @@ pub struct NodeServer {
     /// The core state of the node.
     core: NodeCore,
     /// The state machine of the node.
-    state_machine: StateMachine,
+    state_machine: Box<dyn StateMachine>,
     /// The messenger for the node.
     messenger: NodeMessenger,
     /// The event sender for the node.
@@ -34,7 +34,7 @@ pub struct NodeServer {
 impl NodeServer {
     pub fn new(
         id: u64,
-        state_machine: StateMachine,
+        state_machine: Box<dyn StateMachine>,
         messenger: NodeMessenger,
         event_tx: broadcast::Sender<ConsensusEvent>,
     ) -> Self {

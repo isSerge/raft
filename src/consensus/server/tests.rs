@@ -9,12 +9,17 @@ use crate::{
     config::Config,
     consensus::{ConsensusError, LogEntry, NodeServer, NodeState, NodeTimer, TimerType},
     messaging::{Message, Network, NodeMessenger, NodeReceiver},
-    state_machine::StateMachine,
+    state_machine::StateMachineDefault,
 };
 
 /// Create a new node with a given id, messenger, and receiver.
 fn create_node(id: u64, node_messenger: NodeMessenger) -> NodeServer {
-    NodeServer::new(id, StateMachine::new(), node_messenger, broadcast::channel(16).0)
+    NodeServer::new(
+        id,
+        Box::new(StateMachineDefault::new()),
+        node_messenger,
+        broadcast::channel(16).0,
+    )
 }
 
 /// A struct to hold both a NodeServer and its NodeReceiver for testing

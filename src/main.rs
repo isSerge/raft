@@ -12,7 +12,7 @@ use config::Config;
 use consensus::{ConsensusError, ConsensusEvent, NodeServer, NodeTimer};
 use log::{debug, error, info};
 use messaging::{Message, Network, NodeMessenger};
-use state_machine::StateMachine;
+use state_machine::StateMachineDefault;
 use tokio::sync::{Mutex, broadcast};
 
 /// Helper to send a command message to a specific node
@@ -89,8 +89,12 @@ async fn main() -> Result<(), ConsensusError> {
         let mut timer = NodeTimer::new(config.clone());
 
         // Create a new node
-        let node_server =
-            NodeServer::new(id, StateMachine::new(), node_messenger, event_tx.clone());
+        let node_server = NodeServer::new(
+            id,
+            Box::new(StateMachineDefault::new()),
+            node_messenger,
+            event_tx.clone(),
+        );
         let node_server_arc = Arc::new(Mutex::new(node_server));
         // Store the node in the nodes map
         nodes.insert(id, node_server_arc.clone());
