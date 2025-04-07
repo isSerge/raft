@@ -88,6 +88,12 @@ impl NodeServer {
     pub fn log_last_term(&self) -> u64 {
         self.core.log_last_term()
     }
+
+    /// Get the match index for a peer.
+    #[cfg(test)]
+    pub fn match_index_for(&self, peer_id: u64) -> Option<u64> {
+        self.core.match_index_for(peer_id)
+    }
 }
 
 // RPC methods

@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use tokio::sync::{Mutex, broadcast};
+use tokio::{
+    sync::{Mutex, broadcast},
+    time::{Duration, timeout},
+};
 
 use crate::{
     config::Config,
@@ -46,6 +49,32 @@ fn get_two_nodes(
         (&mut node1.server, &mut node1.receiver, &mut node2.server, &mut node2.receiver)
     } else {
         panic!("Expected at least 2 nodes");
+    }
+}
+
+/// Returns mutable references to the first three nodes in the slice.
+/// Panics if there are fewer than three nodes.
+fn get_three_nodes(
+    nodes: &mut [TestNode],
+) -> (
+    &mut NodeServer,
+    &mut NodeReceiver,
+    &mut NodeServer,
+    &mut NodeReceiver,
+    &mut NodeServer,
+    &mut NodeReceiver,
+) {
+    if let [node1, node2, node3, ..] = nodes {
+        (
+            &mut node1.server,
+            &mut node1.receiver,
+            &mut node2.server,
+            &mut node2.receiver,
+            &mut node3.server,
+            &mut node3.receiver,
+        )
+    } else {
+        panic!("Expected at least 3 nodes");
     }
 }
 
@@ -1162,4 +1191,180 @@ async fn test_handle_timer_event_heartbeat_after_election() {
     } else {
         panic!("Expected AppendEntries message");
     }
+}
+
+#[tokio::test]
+async fn test_handle_vote_response_granted_no_majority() {
+    let total_nodes = 2;
+    let mut nodes = create_network(total_nodes).await;
+    let candidate_id = 0;
+    let candidate = &mut nodes[candidate_id as usize].server;
+
+    // Start as candidate
+    candidate.core.transition_to_candidate();
+    assert_eq!(candidate.state(), NodeState::Candidate);
+    assert_eq!(candidate.current_term(), 1);
+    assert_eq!(candidate.core.votes_received(), 1); // Self-vote
+
+    // Assertions: Still candidate, because only has one vote for itself - no
+    // majority
+    assert_eq!(candidate.state(), NodeState::Candidate);
+    assert_eq!(candidate.current_term(), 1);
+    assert_eq!(candidate.core.votes_received(), 1);
+}
+#[tokio::test]
+async fn test_handle_vote_response_granted_reaches_majority() {
+    // Scenario: 3 nodes, candidate needs 2 votes. Has self-vote, receives 2nd vote
+    // -> becomes leader.
+    let total_nodes = 3;
+    let mut nodes = create_network(total_nodes).await;
+    let candidate_id = 0;
+    let voter_id = 1;
+    let other_follower_id = 2;
+    let (candidate, _, _, follower1_receiver, _, follower2_receiver) = get_three_nodes(&mut nodes);
+
+    // Start as candidate
+    candidate.core.transition_to_candidate();
+    let term = candidate.current_term();
+    assert_eq!(term, 1);
+    assert_eq!(candidate.core.votes_received(), 1); // Self-vote
+
+    // Action: Handle the vote that grants majority
+    let result = candidate.handle_vote_response(term, voter_id, true, &mut create_timer()).await;
+    assert!(result.is_ok());
+
+    // Assertions: Transitioned to Leader
+    assert_eq!(candidate.state(), NodeState::Leader);
+    assert_eq!(candidate.current_term(), term);
+    // votes_received is reset or irrelevant for leader
+    assert!(candidate.match_index_for(voter_id).is_some()); // Leader state initialized
+    assert!(candidate.match_index_for(other_follower_id).is_some());
+
+    // Assertions: Initial heartbeat (empty AppendEntries) sent to followers
+    let msg1 = timeout(Duration::from_millis(50), receive_message(follower1_receiver))
+        .await
+        .expect("Timeout waiting for heartbeat from new leader")
+        .expect("Error receiving message");
+    if let Message::AppendEntries { leader_id, entries, .. } = &*msg1 {
+        assert_eq!(leader_id, &candidate_id);
+        assert!(entries.is_empty());
+    } else {
+        panic!("Expected AppendEntries, got {:?}", msg1);
+    }
+
+    let msg2 = timeout(Duration::from_millis(50), receive_message(follower2_receiver))
+        .await
+        .expect("Timeout waiting for heartbeat from new leader")
+        .expect("Error receiving message");
+    if let Message::AppendEntries { leader_id, entries, .. } = &*msg2 {
+        assert_eq!(*leader_id, candidate_id);
+        assert!(entries.is_empty());
+    } else {
+        panic!("Expected AppendEntries, got {:?}", msg2);
+    }
+}
+
+#[tokio::test]
+async fn test_handle_vote_response_rejected() {
+    // Scenario: 3 nodes, candidate receives a rejection.
+    let total_nodes = 3;
+    let mut nodes = create_network(total_nodes).await;
+    let candidate_id = 0;
+    let voter_id = 1;
+    let candidate = &mut nodes[candidate_id as usize].server;
+
+    // Start as candidate
+    candidate.core.transition_to_candidate();
+    let term = candidate.current_term();
+    let initial_votes = candidate.core.votes_received();
+    assert_eq!(candidate.state(), NodeState::Candidate);
+    assert_eq!(term, 1);
+    assert_eq!(initial_votes, 1); // Self-vote
+
+    // Action: Handle one rejected vote
+    let result = candidate.handle_vote_response(term, voter_id, false, &mut create_timer()).await;
+    assert!(result.is_ok());
+
+    // Assertions: Still candidate, vote count unchanged
+    assert_eq!(candidate.state(), NodeState::Candidate);
+    assert_eq!(candidate.current_term(), term);
+    assert_eq!(candidate.core.votes_received(), initial_votes); // Vote count should not increase
+}
+
+#[tokio::test]
+async fn test_handle_vote_response_stale_term() {
+    // Scenario: Candidate is in term 2, receives a response for term 1.
+    let mut nodes = create_network(1).await;
+    let candidate_id = 0;
+    let voter_id = 999;
+    let candidate = &mut nodes[candidate_id as usize].server;
+
+    // Start as candidate in term 2
+    candidate.core.transition_to_candidate(); // Term 1
+    candidate.core.transition_to_follower(2); // Force term update
+    candidate.core.transition_to_candidate(); // Term 3, Vote 1
+    let current_term = candidate.current_term();
+    let initial_votes = candidate.core.votes_received();
+    assert_eq!(candidate.state(), NodeState::Candidate);
+    assert_eq!(current_term, 3);
+    assert_eq!(initial_votes, 1);
+
+    // Action: Handle response with older term (term 2)
+    let result =
+        candidate.handle_vote_response(current_term - 1, voter_id, true, &mut create_timer()).await;
+    assert!(result.is_ok());
+
+    // Assertions: State unchanged, response ignored
+    assert_eq!(candidate.state(), NodeState::Candidate);
+    assert_eq!(candidate.current_term(), current_term);
+    assert_eq!(candidate.core.votes_received(), initial_votes);
+}
+
+#[tokio::test]
+async fn test_handle_vote_response_future_term() {
+    // Scenario: Candidate is in term 1, receives a response for term 2.
+    let mut nodes = create_network(1).await;
+    let voter_id = 999;
+    let candidate_id = 0;
+    let candidate = &mut nodes[candidate_id as usize].server;
+
+    // Start as candidate in term 1
+    candidate.core.transition_to_candidate();
+    let initial_term = candidate.current_term();
+    assert_eq!(candidate.state(), NodeState::Candidate);
+    assert_eq!(initial_term, 1);
+
+    let future_term = initial_term + 1;
+
+    // Action: Handle response with future term (vote granted status doesn't matter)
+    let result =
+        candidate.handle_vote_response(future_term, voter_id, false, &mut create_timer()).await;
+    assert!(result.is_ok());
+
+    // Assertions: State becomes Follower, term updated
+    assert_eq!(candidate.state(), NodeState::Follower);
+    assert_eq!(candidate.current_term(), future_term);
+    // votes_received should be reset upon transitioning
+    assert_eq!(candidate.core.votes_received(), 0);
+}
+
+#[tokio::test]
+async fn test_handle_vote_response_when_not_candidate() {
+    // Scenario: Node is Follower, receives a VoteResponse.
+    let mut nodes = create_network(1).await;
+    let node_id = 0;
+    let node = &mut nodes[node_id as usize].server;
+
+    // Ensure state is Follower
+    assert_eq!(node.state(), NodeState::Follower);
+    let initial_term = node.current_term();
+
+    // Action: Handle VoteResponse
+    let result = node.handle_vote_response(initial_term, 99, true, &mut create_timer()).await;
+    assert!(result.is_ok());
+
+    // Assertions: State remains Follower, term unchanged
+    assert_eq!(node.state(), NodeState::Follower);
+    assert_eq!(node.current_term(), initial_term);
+    assert_eq!(node.core.votes_received(), 0);
 }
