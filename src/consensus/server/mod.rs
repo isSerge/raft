@@ -16,10 +16,18 @@ use crate::{
 
 #[derive(Debug)]
 pub struct NodeServer {
+    /// The core state of the node.
     core: NodeCore,
+    // TODO: consider making state_machine private
+    /// The state machine of the node.
     pub state_machine: StateMachine,
+    /// The messenger for the node.
     messenger: NodeMessenger,
+    /// The event sender for the node.
     event_tx: broadcast::Sender<ConsensusEvent>,
+    /// The pending append entries for the node. Used to track the pending
+    /// append entries for each follower. Key is follower ID, value is a tuple
+    /// of (prev_log_index, entries_len).
     pending_append_entries: HashMap<u64, (u64, usize)>,
 }
 
@@ -39,6 +47,8 @@ impl NodeServer {
             pending_append_entries: HashMap::new(),
         }
     }
+
+    // TODO: consider adding constructors for testing with initial state
 }
 
 // NodeServer getters (thin wrappers around core methods)
@@ -56,12 +66,6 @@ impl NodeServer {
     /// Get the current term.
     pub fn current_term(&self) -> u64 {
         self.core.current_term()
-    }
-
-    /// Get the node that this node voted for.
-    #[cfg(test)]
-    pub fn voted_for(&self) -> Option<u64> {
-        self.core.voted_for()
     }
 
     /// Get the log.
@@ -89,6 +93,7 @@ impl NodeServer {
         self.core.log_last_term()
     }
 
+    // Getters for testing
     /// Get the match index for a peer.
     #[cfg(test)]
     pub fn match_index_for(&self, peer_id: u64) -> Option<u64> {
@@ -99,6 +104,12 @@ impl NodeServer {
     #[cfg(test)]
     pub fn next_index_for(&self, peer_id: u64) -> Option<u64> {
         self.core.next_index_for(peer_id)
+    }
+
+    /// Get the node that this node voted for.
+    #[cfg(test)]
+    pub fn voted_for(&self) -> Option<u64> {
+        self.core.voted_for()
     }
 }
 
@@ -149,7 +160,8 @@ impl NodeServer {
         self.broadcast(msg).await
     }
 
-    /// Send an AppendEntries to all followers.
+    /// Send an AppendEntries to all followers. Returns Ok(()) if successful,
+    /// Err if not leader.
     async fn send_append_entries_to_all_followers(&mut self) -> Result<(), ConsensusError> {
         if self.core.state() != NodeState::Leader {
             warn!("Node {} tried to send AppendEntries to followers but is not Leader", self.id());
@@ -160,9 +172,12 @@ impl NodeServer {
 
         let peer_ids = self.messenger.get_peer_ids().await?;
 
+        // Send AppendEntries to all followers
+        // Vec to store results from all followers
         let mut results = Vec::new();
 
         for peer_id in peer_ids {
+            // Skip self
             if peer_id == self.id() {
                 continue;
             }
@@ -171,6 +186,8 @@ impl NodeServer {
             results.push(result);
         }
 
+        // TODO: consider more sophisticated error handling
+        // Check if any followers failed to receive AppendEntries
         if results.iter().any(|r| r.is_err()) {
             error!("Node {} failed to send AppendEntries to at least one follower", self.id());
             Err(ConsensusError::Transport(MessagingError::BroadcastError))
@@ -180,7 +197,7 @@ impl NodeServer {
         }
     }
 
-    /// Send an AppendEntries to a follower.
+    /// Send an AppendEntries to a follower (used by Leader)
     async fn send_append_entries_to_follower(
         &mut self,
         peer_id: u64,
@@ -236,7 +253,8 @@ impl NodeServer {
 
 // Command handlers
 impl NodeServer {
-    /// Start an election.
+    /// Start an election. Used when received Election timer event or start
+    /// election command
     async fn start_election(&mut self) -> Result<(), ConsensusError> {
         let new_term = self.current_term() + 1;
         info!("Node {} starting election for term {}", self.id(), new_term);
@@ -448,6 +466,7 @@ impl NodeServer {
             // Check if majority of votes have been received
             let majority_count = total_nodes / 2 + 1;
 
+            // If majority of votes have been received, transition to leader
             if self.core.votes_received() >= majority_count {
                 info!(
                     "Node {} received majority of votes ({}/{}), becoming Leader for Term {}",
@@ -457,9 +476,9 @@ impl NodeServer {
                     self.current_term()
                 );
 
-                // Transition to leader
                 let peer_ids = self.messenger.get_peer_ids().await?;
                 self.core.transition_to_leader(&peer_ids);
+
                 // Start heartbeat timer
                 timer.reset_heartbeat_timer();
 
@@ -485,7 +504,7 @@ impl NodeServer {
     /// determine if they have received a majority of responses.
     async fn handle_append_response(
         &mut self,
-        term: u64, // term from the follower
+        follower_term: u64,
         success: bool,
         from_id: u64,
         timer: &mut NodeTimer,
@@ -494,7 +513,7 @@ impl NodeServer {
             "Node {} (Leader) received AppendResponse from follower {} for term {} (Success: {})",
             self.id(),
             from_id,
-            term,
+            follower_term,
             success
         );
 
@@ -507,39 +526,38 @@ impl NodeServer {
         }
 
         // If response contains higher term, convert to follower
-        if term > self.current_term() {
+        if follower_term > self.current_term() {
             info!(
                 "Node {} (Leader) sees newer term {} in AppendResponse from follower {}, \
                  transitioning to Follower.",
                 self.id(),
-                term,
+                follower_term,
                 from_id
             );
             // Clear pending info as we are no longer leader
             self.pending_append_entries.clear();
-            self.core.transition_to_follower(term);
+            self.core.transition_to_follower(follower_term);
             timer.reset_election_timer();
             return Ok(());
         }
 
         // Ignore if response is for an older term (stale response)
-        if term < self.current_term() {
+        if follower_term < self.current_term() {
             debug!(
                 "Node {} (Leader) received stale AppendResponse from Node {} for term {}. \
                  Ignoring.",
                 self.id(),
                 from_id,
-                term
+                follower_term
             );
             // Do not clear pending info here, the follower might just be slow
             return Ok(());
         }
 
-        // Retrieve pending info (simplification - assumes last sent RPC)
-        // Remove it AFTER processing below
+        // Retrieve pending info
         let pending_info = self.pending_append_entries.get(&from_id).cloned();
 
-        // *** Added: Get total nodes for commit calculation ***
+        // Get total nodes for commit calculation
         let total_nodes = match self.messenger.get_nodes_count().await {
             Ok(count) => count,
             Err(e) => {
@@ -557,7 +575,6 @@ impl NodeServer {
         };
 
         // Process response for the current term
-        // *** MODIFIED: Calls core.leader_process_append_response with total_nodes ***
         let (commit_advanced, _old_ci, _new_ci) =
             if let Some((sent_prev_log_index, sent_entries_len)) = pending_info {
                 self.core.leader_process_append_response(
@@ -565,7 +582,7 @@ impl NodeServer {
                     success,
                     sent_prev_log_index,
                     sent_entries_len,
-                    total_nodes, // *** Pass total nodes count ***
+                    total_nodes,
                 )
             } else {
                 warn!(
@@ -577,18 +594,12 @@ impl NodeServer {
                 (false, self.commit_index(), self.commit_index()) // No change
             };
 
-        // If success=false, nextIndex was decremented in
-        // core.leader_process_append_response. A full implementation might
-        // immediately retry sending AE to this follower. We rely on the next
-        // heartbeat for simplicity.
-
-        // *** MODIFIED: Apply based on actual commit advancement result ***
+        // Apply committed entries if commit index has advanced
         if commit_advanced {
             self.apply_committed_entries();
         }
 
         // Clear pending info now that response is processed
-        // (only if we actually used it - check pending_info was Some)
         if pending_info.is_some() {
             self.pending_append_entries.remove(&from_id);
         }
@@ -596,7 +607,8 @@ impl NodeServer {
         Ok(())
     }
 
-    /// Send a heartbeat to all other nodes.
+    /// Send a heartbeat to all other nodes. Used when received Heartbeat timer
+    /// event.
     async fn send_heartbeat(&mut self) -> Result<(), ConsensusError> {
         info!("Node {} sending heartbeat to all other nodes", self.id());
         self.send_append_entries_to_all_followers().await
@@ -634,8 +646,8 @@ impl NodeServer {
         Ok(())
     }
 
-    /// Receives and processes a single message or timer event.
-    /// Returns Ok(()) if processed successfully, Err on error.
+    /// Receives and processes a single message or timer event. Used by the
+    /// event loop. Returns Ok(()) if processed successfully, Err on error.
     pub async fn process_message(
         &mut self,
         msg: Arc<Message>,
