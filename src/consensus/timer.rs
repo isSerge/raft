@@ -5,9 +5,7 @@ use tokio::time::{Duration, Instant, Sleep};
 
 use crate::config::Config;
 
-// TODO: add logging
-
-/// Events that can be emitted when a timer expires.
+/// The type of timer that has expired.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum TimerType {
     /// Election timer expired.
@@ -65,6 +63,8 @@ impl NodeTimer {
         self.set_timer(TimerType::Heartbeat);
     }
 
+    /// Wait for the currently active timer to expire and emit the appropriate
+    /// event. Returns the type of timer that expired. Used by the event loop.
     pub async fn wait_for_timer_and_emit_event(&mut self) -> TimerType {
         // Get a mutable reference to the timer tuple
         let (timer_type, future) = &mut self.active_timer;

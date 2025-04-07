@@ -12,5 +12,4 @@ pub enum ConsensusError {
     NotCandidate(u64),
     #[error("Message handling failed: {0}")]
     Transport(#[from] MessagingError),
-    // TODO: add log inconsistency error
 }

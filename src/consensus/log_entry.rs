@@ -1,4 +1,6 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
+
+/// A log entry in the Raft log.
 pub struct LogEntry {
     pub term: u64,
     pub command: String,
