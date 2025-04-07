@@ -4,7 +4,7 @@ use tokio::sync::{Mutex, broadcast};
 
 use crate::{
     config::Config,
-    consensus::{ConsensusError, LogEntry, NodeServer, NodeState, NodeTimer},
+    consensus::{ConsensusError, LogEntry, NodeServer, NodeState, NodeTimer, TimerType},
     messaging::{Message, Network, NodeMessenger, NodeReceiver},
     state_machine::StateMachine,
 };
@@ -1041,4 +1041,125 @@ async fn test_node_process_message_start_append_entries_cmd_not_leader() {
 
     // Log should remain empty.
     assert_eq!(node.log().len(), 0);
+}
+
+#[tokio::test]
+async fn test_handle_timer_event_election_when_not_leader() {
+    let mut nodes = create_network(2).await;
+    let (node, _node_receiver, _, follower_receiver) = get_two_nodes(&mut nodes);
+    let mut timer = create_timer();
+
+    // Ensure node is a follower
+    assert_eq!(node.state(), NodeState::Follower);
+
+    // Handle election timer event
+    node.handle_timer_event(TimerType::Election, &mut timer).await.unwrap();
+
+    // Node should have transitioned to candidate
+    assert_eq!(node.state(), NodeState::Candidate);
+
+    // Verify that the timer was reset to election (candidates use election timer)
+    assert_eq!(timer.get_active_timer(), TimerType::Election);
+
+    // Node should have broadcast a vote request
+    let vote_request = receive_message(follower_receiver).await.unwrap();
+    if let Message::VoteRequest { term, candidate_id, last_log_index, last_log_term } =
+        &*vote_request
+    {
+        assert_eq!(*term, 1);
+        assert_eq!(*candidate_id, node.id());
+        assert_eq!(*last_log_index, 0);
+        assert_eq!(*last_log_term, 0);
+    } else {
+        panic!("Expected VoteRequest message");
+    }
+}
+
+#[tokio::test]
+async fn test_handle_timer_event_election_when_leader() {
+    let mut nodes = create_network(2).await;
+    let (node, _, _, _) = get_two_nodes(&mut nodes);
+    let mut timer = create_timer();
+
+    // Transition node to leader
+    node.core.transition_to_candidate();
+    node.core.transition_to_leader(&[node.id()]);
+
+    // Ensure node is a leader
+    assert_eq!(node.state(), NodeState::Leader);
+
+    // Handle election timer event
+    node.handle_timer_event(TimerType::Election, &mut timer).await.unwrap();
+
+    // Node should still be a leader
+    assert_eq!(node.state(), NodeState::Leader);
+
+    // Verify that the timer was reset to heartbeat
+    assert_eq!(timer.get_active_timer(), TimerType::Heartbeat);
+}
+
+#[tokio::test]
+async fn test_handle_timer_event_heartbeat_when_not_leader() {
+    let mut nodes = create_network(2).await;
+    let (node, _, _, _) = get_two_nodes(&mut nodes);
+    let mut timer = create_timer();
+
+    // Ensure node is a follower
+    assert_eq!(node.state(), NodeState::Follower);
+
+    // Handle heartbeat timer event
+    node.handle_timer_event(TimerType::Heartbeat, &mut timer).await.unwrap();
+
+    // Node should still be a follower
+    assert_eq!(node.state(), NodeState::Follower);
+
+    // Verify that the timer was reset to election
+    assert_eq!(timer.get_active_timer(), TimerType::Election);
+}
+
+#[tokio::test]
+async fn test_handle_timer_event_heartbeat_after_election() {
+    // Create a network with two nodes
+    let mut nodes = create_network(2).await;
+    let (node, node_receiver, follower, follower_receiver) = get_two_nodes(&mut nodes);
+    let mut timer = create_timer();
+
+    // Start election and wait for vote response
+    node.process_message(Arc::new(Message::StartElectionCmd), &mut timer).await.unwrap();
+    let vote_request = receive_message(follower_receiver).await.unwrap();
+    follower.process_message(vote_request, &mut create_timer()).await.unwrap();
+    let vote_response = receive_message(node_receiver).await.unwrap();
+    node.process_message(vote_response, &mut timer).await.unwrap();
+
+    // Ensure node is now a leader
+    assert_eq!(node.state(), NodeState::Leader);
+    assert_eq!(timer.get_active_timer(), TimerType::Heartbeat);
+
+    // Handle heartbeat timer event
+    node.handle_timer_event(TimerType::Heartbeat, &mut timer).await.unwrap();
+
+    // Verify leader state and timer
+    assert_eq!(node.state(), NodeState::Leader);
+    assert_eq!(timer.get_active_timer(), TimerType::Heartbeat);
+
+    // Verify heartbeat message
+    let heartbeat = receive_message(follower_receiver).await.unwrap();
+    if let Message::AppendEntries {
+        term,
+        leader_id,
+        entries,
+        prev_log_index,
+        prev_log_term,
+        leader_commit,
+    } = &*heartbeat
+    {
+        assert_eq!(*term, 1);
+        assert_eq!(*leader_id, node.id());
+        assert!(entries.is_empty());
+        assert_eq!(*prev_log_index, 0);
+        assert_eq!(*prev_log_term, 0);
+        assert_eq!(*leader_commit, 0);
+    } else {
+        panic!("Expected AppendEntries message");
+    }
 }

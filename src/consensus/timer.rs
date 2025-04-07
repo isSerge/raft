@@ -81,6 +81,12 @@ impl NodeTimer {
 
         expired_timer_type
     }
+
+    /// Get the currently active timer.
+    #[cfg(test)]
+    pub fn get_active_timer(&self) -> TimerType {
+        self.active_timer.0
+    }
 }
 
 #[cfg(test)]
