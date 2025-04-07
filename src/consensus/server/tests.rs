@@ -1368,3 +1368,47 @@ async fn test_handle_vote_response_when_not_candidate() {
     assert_eq!(node.current_term(), initial_term);
     assert_eq!(node.core.votes_received(), 0);
 }
+
+#[tokio::test]
+async fn test_handle_append_response_success_updates_match_next() {
+    // Scenario: Leader receives successful response, updates match/next for the
+    // follower.
+    let total_nodes = 2; // Leader + 1 Follower
+    let mut nodes = create_network(total_nodes).await;
+    let leader_id = 0;
+    let follower_id = 1;
+    let leader = &mut nodes[leader_id as usize].server;
+
+    // Setup: Make node 0 the leader, add a log entry
+    leader.core.transition_to_candidate(); // term 1
+    leader.core.leader_append_entry("cmd1".to_string()); // log index 1
+    leader.core.transition_to_leader(&[leader_id, follower_id]); // Initializes next/match
+    let term = leader.current_term(); // should be 1
+
+    // Assume leader sent entry 1 (prevLogIndex=0, entries.len=1)
+    let sent_prev_log_index = 0;
+    let sent_entries_len = 1;
+    leader.pending_append_entries.insert(follower_id, (sent_prev_log_index, sent_entries_len));
+
+    let initial_match = leader.match_index_for(follower_id).unwrap();
+    let initial_next = leader.next_index_for(follower_id).unwrap();
+
+    // Action: Process successful response from follower
+    let result = leader.handle_append_response(term, true, follower_id, &mut create_timer()).await;
+    assert!(result.is_ok());
+
+    // Assertions: Leader state, match/next updated, commit unchanged
+    assert_eq!(leader.state(), NodeState::Leader);
+    assert_eq!(
+        leader.match_index_for(follower_id).unwrap(),
+        sent_prev_log_index + sent_entries_len as u64
+    );
+    assert_eq!(
+        leader.next_index_for(follower_id).unwrap(),
+        sent_prev_log_index + sent_entries_len as u64 + 1
+    );
+    assert_ne!(leader.match_index_for(follower_id).unwrap(), initial_match); // Ensure it changed
+    assert_ne!(leader.next_index_for(follower_id).unwrap(), initial_next); // Ensure it changed
+    assert_eq!(leader.commit_index(), 0); // Need 2/2 matches for commit index 1
+    assert!(!leader.pending_append_entries.contains_key(&follower_id)); // Pending info cleared
+}

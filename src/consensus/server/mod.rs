@@ -94,6 +94,12 @@ impl NodeServer {
     pub fn match_index_for(&self, peer_id: u64) -> Option<u64> {
         self.core.match_index_for(peer_id)
     }
+
+    /// Get the next index for a peer.
+    #[cfg(test)]
+    pub fn next_index_for(&self, peer_id: u64) -> Option<u64> {
+        self.core.next_index_for(peer_id)
+    }
 }
 
 // RPC methods
