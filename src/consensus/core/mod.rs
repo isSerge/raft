@@ -42,9 +42,11 @@ pub struct NodeCore {
     votes_received: u64,
 
     // Leader only
-    /// The next index of the node for each node.
+    /// The next index of the node for each node. Used for Leader's
+    /// AppendEntries processing.
     next_index: HashMap<u64, u64>,
-    /// The match index of the node for each node.
+    /// The match index of the node for each node. Used for Leader's
+    /// AppendEntries processing.
     match_index: HashMap<u64, u64>,
 }
 
@@ -54,40 +56,42 @@ impl NodeCore {
         Self { id, ..Default::default() }
     }
 
-    // TODO: add constructors for testing with initial state
+    // TODO: consider adding constructors for testing with initial state
 }
 
 // Getters
 impl NodeCore {
+    /// Get the id of the node.
     pub fn id(&self) -> u64 {
         self.id
     }
 
+    /// Get the state of the node.
     pub fn state(&self) -> NodeState {
         self.state
     }
 
+    /// Get the current term.
     pub fn current_term(&self) -> u64 {
         self.current_term
     }
 
-    #[cfg(test)]
-    pub fn voted_for(&self) -> Option<u64> {
-        self.voted_for
-    }
-
+    /// Get the log.
     pub fn log(&self) -> &[LogEntry] {
         &self.log
     }
 
+    /// Get the commit index.
     pub fn commit_index(&self) -> u64 {
         self.commit_index
     }
 
+    /// Get the number of votes received by the node.
     pub fn votes_received(&self) -> u64 {
         self.votes_received
     }
 
+    /// Get the last applied index.
     pub fn last_applied(&self) -> u64 {
         self.last_applied
     }
@@ -108,10 +112,17 @@ impl NodeCore {
         self.next_index.get(&follower_id).copied()
     }
 
+    // Getters for testing
     /// Get the match index for a node.
     #[cfg(test)]
     pub fn match_index_for(&self, follower_id: u64) -> Option<u64> {
         self.match_index.get(&follower_id).copied()
+    }
+
+    /// Get the node that the node has voted for.
+    #[cfg(test)]
+    pub fn voted_for(&self) -> Option<u64> {
+        self.voted_for
     }
 }
 
@@ -171,6 +182,7 @@ impl NodeCore {
         let term_updated = self.update_term(term);
         let state_changed = self.state() != NodeState::Follower;
 
+        // Only transition if state changed or term was updated
         if term_updated || state_changed {
             info!("Node {} transitioning to follower state at term {}", self.id, term);
             self.state = NodeState::Follower;
@@ -189,7 +201,7 @@ impl NodeCore {
         info!("Node {} transitioning to candidate state at term {}", self.id, new_term);
 
         let term_updated = self.update_term(new_term);
-        assert!(term_updated, "Term should increase");
+        assert!(term_updated, "Term should increase when transitioning to candidate");
         self.state = NodeState::Candidate;
         self.voted_for = Some(self.id);
         self.votes_received = 1; // add self vote
@@ -212,11 +224,16 @@ impl NodeCore {
         self.initialize_leader_state(peer_ids);
     }
 
-    /// Update the commit index.
+    /// Update follower's commit index based on the leader's commit index. Used
+    /// in Leader's AppendEntries response processing.
     pub fn follower_update_commit_index(&mut self, leader_commit_index: u64) {
         let old_commit_index = self.commit_index();
+        // Follower's commit index cannot exceed the length of its log
         let follower_commit_limit = self.log().len() as u64;
-        if leader_commit_index > old_commit_index {
+
+        // Only update if leader's commit index is greater than follower's commit index
+        // and less than the follower's log length
+        if leader_commit_index > old_commit_index && leader_commit_index <= follower_commit_limit {
             self.commit_index = leader_commit_index.min(follower_commit_limit);
             if self.commit_index() > old_commit_index {
                 // Log only if changed
@@ -239,6 +256,7 @@ impl NodeCore {
         }
     }
 
+    /// Initialize leader state. Used when transitioning to leader.
     fn initialize_leader_state(&mut self, peer_ids: &[u64]) {
         self.next_index.clear();
         self.match_index.clear();
@@ -312,8 +330,7 @@ impl NodeCore {
                     self.id, from_id, *current_match_index, new_match_index
                 );
 
-                // Only update next_index and recalculate commit index if match_index was
-                // updated
+                // Update next_index for the follower
                 self.next_index.insert(from_id, new_next_index);
 
                 debug!(
@@ -321,6 +338,7 @@ impl NodeCore {
                     self.id, from_id, new_next_index
                 );
 
+                // Recalculate commit index
                 self.leader_recalculate_commit_index(total_nodes);
             } else {
                 debug!(
@@ -332,6 +350,7 @@ impl NodeCore {
             // Append failed. Decrement next_index for the follower.
             let current_next_index = self.next_index.entry(from_id).or_insert(0);
 
+            // Only decrement if next_index is greater than 1
             if *current_next_index > 1 {
                 *current_next_index -= 1;
                 info!(
@@ -347,12 +366,14 @@ impl NodeCore {
             }
         }
 
+        // Return true if commit index has advanced
         let commit_has_advanced = self.commit_index() > old_commit_index;
 
         (commit_has_advanced, old_commit_index, self.commit_index())
     }
 
-    /// Check if the log is consistent with another log.
+    /// Check if the log is consistent with another log. Used by Follower's
+    /// AppendEntries processing.
     fn check_log_consistency(&self, prev_log_index: u64, prev_log_term: u64) -> bool {
         if prev_log_index == 0 {
             // Base case: Leader is sending entries from the beginning. Always consistent.
@@ -386,7 +407,6 @@ impl NodeCore {
                         false
                     },
                 None => {
-                    // Should be caught by the length check above, but belt-and-suspenders.
                     error!(
                         "Node {} log consistency check error: Log entry not found at index {} \
                          despite passing length check.",
@@ -431,18 +451,22 @@ impl NodeCore {
     fn find_conflicts_and_append(&mut self, prev_log_index: u64, entries: &[LogEntry]) -> bool {
         let mut log_modified = false;
         let mut leader_entry_index = 0;
-        let mut current_raft_index = prev_log_index + 1;
+        let mut current_raft_index = prev_log_index + 1; // Raft uses 1-based indexing
 
+        // Iterate through leader's entries
         while leader_entry_index < entries.len() {
             let leader_entry = &entries[leader_entry_index];
             let current_vec_index = (current_raft_index - 1) as usize;
 
+            // If leader's entry is beyond the follower's log, append the entire leader's
+            // entries
             if current_raft_index > self.log_last_index() {
                 self.log.extend_from_slice(&entries[leader_entry_index..]);
                 log_modified = true;
                 break;
             }
 
+            // If follower has an entry at current_raft_index, check if terms match
             if let Some(follower_entry) = self.log.get(current_vec_index) {
                 if follower_entry.term != leader_entry.term {
                     // Conflict detected. Truncate log.
@@ -486,9 +510,9 @@ impl NodeCore {
             self.transition_to_follower(candidate_term);
         }
 
-        // 3. Check if already voted in this term (§5.2)
+        // 3. Check if already voted in this term
         let can_vote = match self.voted_for {
-            // Already voted for the requesting candidate: grant again (idempotent)
+            // Already voted for the requesting candidate: grant again
             Some(id) if id == candidate_id => true,
             // Already voted for someone else: reject
             Some(_) => false,
@@ -511,6 +535,8 @@ impl NodeCore {
         let candidate_log_is_up_to_date = match candidate_last_log_term.cmp(&self.log_last_term()) {
             Ordering::Greater => true,
             Ordering::Less => false,
+            // If terms are equal, check if candidate's log is at least as long as
+            // follower's log
             Ordering::Equal => candidate_last_log_index >= self.log_last_index(),
         };
 
@@ -528,6 +554,8 @@ impl NodeCore {
         (true, self.current_term())
     }
 
+    /// Recalculate commit index. Used by Leader's AppendEntries response
+    /// processing.
     fn leader_recalculate_commit_index(&mut self, total_nodes: usize) -> bool {
         let current_commit_index = self.commit_index();
         let mut highest_commitable_index = current_commit_index;
