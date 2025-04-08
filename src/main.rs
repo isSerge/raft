@@ -185,19 +185,28 @@ async fn main() -> Result<(), ConsensusError> {
     };
 
     // Phase 2: Leader appends entries
-    let command = "Hello, world!".to_string();
-    info!("Simulation: Sending command '{}' to Leader Node {}...", command, leader_id);
-    send_command_to_node(
-        &nodes_messengers,
-        leader_id,
-        Message::StartAppendEntriesCmd { command: command.clone() },
-    )
-    .await?;
-    info!("Simulation: Finished sending command.");
+    let num_commands_to_send = 10;
+
+    info!("Simulation: Sending {} commands to Leader Node {}...", num_commands_to_send, leader_id);
+
+    for i in 1..=num_commands_to_send {
+        // Loop to send multiple commands
+        let command = format!("Command {}", i);
+        debug!("Simulation: Sending command '{}' to Leader {}", command, leader_id);
+        send_command_to_node(
+            &nodes_messengers,
+            leader_id,
+            Message::StartAppendEntriesCmd { command },
+        )
+        .await?;
+        // Optional: Small delay between commands to simulate client behavior
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    info!("Simulation: Finished sending commands.");
 
     // Phase 3: Verify that the command was appended to the leader's log
-    let target_last_applied = 1; // We expect index 1 to be applied
-    let target_state_value = 1; // Assuming state machine increments by 1
+    let target_last_applied = num_commands_to_send; // We expect index 1 to be applied
+    let target_state_value = num_commands_to_send; // Assuming state machine increments by 1
     let verification_start_time = tokio::time::Instant::now();
     let mut success = false; // Assume failure until proven otherwise
     let verification_timeout = Duration::from_secs(10);
@@ -252,7 +261,7 @@ async fn main() -> Result<(), ConsensusError> {
             break;
         }
 
-        // If we didn't succeed this iteration, wait before polling again
+        // Wait before polling again
         tokio::time::sleep(Duration::from_millis(150)).await;
     }
 
