@@ -146,7 +146,6 @@ async fn main() -> Result<(), ConsensusError> {
 
     // Phase 1: Leader election
     let leader_id = {
-        let mut leader_id_opt = None;
         let election_start_time = tokio::time::Instant::now();
         loop {
             // Check timeout
@@ -162,8 +161,7 @@ async fn main() -> Result<(), ConsensusError> {
             match event_rx.try_recv() {
                 Ok(ConsensusEvent::LeaderElected { leader_id }) => {
                     info!("Simulation: Leader Elected: Node {}", leader_id);
-                    leader_id_opt = Some(leader_id);
-                    break; // Exit loop once leader is found
+                    break leader_id; // Exit loop and return leader_id directly
                 }
                 Ok(other_event) => {
                     debug!(
@@ -184,12 +182,100 @@ async fn main() -> Result<(), ConsensusError> {
                 }
             }
         }
-        leader_id_opt.expect("Loop should not exit without setting leader_id")
     };
 
-    info!("Simulation: Complete");
-    info!("Press Ctrl+C to exit.");
-    tokio::signal::ctrl_c().await.expect("failed to listen for ctrl+c");
+    // Phase 2: Leader appends entries
+    let command = "Hello, world!".to_string();
+    info!("Simulation: Sending command '{}' to Leader Node {}...", command, leader_id);
+    send_command_to_node(
+        &nodes_messengers,
+        leader_id,
+        Message::StartAppendEntriesCmd { command: command.clone() },
+    )
+    .await?;
+    info!("Simulation: Finished sending command.");
+
+    // Phase 3: Verify that the command was appended to the leader's log
+    let target_last_applied = 1; // We expect index 1 to be applied
+    let target_state_value = 1; // Assuming state machine increments by 1
+    let verification_start_time = tokio::time::Instant::now();
+    let mut success = false; // Assume failure until proven otherwise
+    let verification_timeout = Duration::from_secs(10);
+
+    info!(
+        "Simulation: Verifying application of commit index {} across {} nodes (timeout: {:?})...",
+        target_last_applied, config.node_count, verification_timeout
+    );
+
+    loop {
+        // Check timeout first
+        if verification_start_time.elapsed() > verification_timeout {
+            error!(
+                "Simulation: Verification timeout after {:?}. Target state not reached on all \
+                 nodes.",
+                verification_timeout
+            );
+            break;
+        }
+
+        // Assume this iteration will succeed unless a node fails the check
+        let mut all_nodes_ok_this_iteration = true;
+
+        for id in 0..config.node_count as u64 {
+            let node_arc = nodes.get(&id).expect("Node ID should exist");
+            let node_locked = node_arc.lock().await; // Lock briefly
+
+            // Check if THIS node meets the condition
+            if !(node_locked.last_applied() >= target_last_applied
+                && node_locked.state_machine_state() == target_state_value)
+            {
+                // If any node fails, this iteration is not successful, no need to check others
+                all_nodes_ok_this_iteration = false;
+                debug!(
+                    "Node {} has not reached target state yet (last_applied={}, sm_state={})",
+                    id,
+                    node_locked.last_applied(),
+                    node_locked.state_machine_state()
+                );
+                break;
+            }
+        }
+
+        // If we finished the inner loop and all nodes were ok
+        if all_nodes_ok_this_iteration {
+            success = true;
+            info!(
+                "Simulation: Verification successful! All {} nodes reached target state \
+                 (last_applied >= {}, sm_state={}).",
+                config.node_count, target_last_applied, target_state_value
+            );
+            break;
+        }
+
+        // If we didn't succeed this iteration, wait before polling again
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+
+    if !success {
+        // Use the success flag determined by the loop
+        error!("Simulation: Verification FAILED.");
+        // Print final states for debugging
+        for id in 0..config.node_count as u64 {
+            let node_arc = nodes.get(&id).unwrap();
+            let node_locked = node_arc.lock().await;
+            error!(
+                " -> Final State Node {}: Term={}, State={:?}, CommitIdx={}, LastApplied={}, \
+                 SMState={}",
+                id,
+                node_locked.current_term(),
+                node_locked.state(),
+                node_locked.commit_index(),
+                node_locked.last_applied(),
+                node_locked.state_machine_state()
+            );
+        }
+        return Err(ConsensusError::Timeout("State verification failed".to_string()));
+    }
 
     Ok(())
 }

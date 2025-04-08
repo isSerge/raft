@@ -92,6 +92,11 @@ impl NodeServer {
         self.core.log_last_term()
     }
 
+    /// Get the state of the state machine.
+    pub fn state_machine_state(&self) -> u64 {
+        self.state_machine.get_state()
+    }
+
     // Getters for testing
     /// Get the match index for a peer.
     #[cfg(test)]
