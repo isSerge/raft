@@ -10,7 +10,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use config::Config;
 use consensus::{ConsensusError, ConsensusEvent, NodeServer, NodeTimer};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use messaging::{Message, Network, NodeMessenger};
 use state_machine::StateMachineDefault;
 use tokio::sync::{Mutex, broadcast};
@@ -30,41 +30,13 @@ async fn send_command_to_node(
     }
 }
 
-/// Wait for an event to occur.
-async fn wait_for_event(
-    rx: &mut broadcast::Receiver<ConsensusEvent>,
-    expected_event: ConsensusEvent,
-    timeout_duration: Duration,
-) -> Result<(), ConsensusError> {
-    let timeout = tokio::time::timeout(timeout_duration, rx.recv()).await;
-    match timeout {
-        Ok(Ok(event)) =>
-            if event == expected_event {
-                Ok(())
-            } else {
-                error!("Simulation: Expected event but got {:?}", event);
-                Err(ConsensusError::Timeout(
-                    "Simulation: Expected event {:?} but got {:?}".to_string(),
-                ))
-            },
-        Ok(Err(e)) => {
-            error!("Simulation: Error receiving event: {:?}", e);
-            Err(ConsensusError::Timeout("Simulation: Error receiving event".to_string()))
-        }
-        Err(_) => {
-            error!("Simulation: Timeout waiting for event {:?}", expected_event);
-            Err(ConsensusError::Timeout("Simulation: Timeout waiting for event {:?}".to_string()))
-        }
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), ConsensusError> {
     // Initialize logging
     env_logger::init();
 
     // Create a config
-    let config = Config { node_count: 2, ..Default::default() };
+    let config = Config { node_count: 3, ..Default::default() };
 
     // Create a broadcast channel for consensus events.
     let (event_tx, mut event_rx) = broadcast::channel::<ConsensusEvent>(16);
@@ -170,34 +142,50 @@ async fn main() -> Result<(), ConsensusError> {
 
     info!("Simulation: Nodes initialized, tasks spawned");
 
-    info!("Simulation: Starting election for node 0");
-    send_command_to_node(&nodes_messengers, 0, Message::StartElectionCmd).await?;
-
-    // Wait for the LeaderElected event.
     info!("Simulation: Waiting for leader elected event...");
-    wait_for_event(
-        &mut event_rx,
-        ConsensusEvent::LeaderElected { leader_id: 0 },
-        Duration::from_secs(10),
-    )
-    .await?;
 
-    info!("Simulation: Starting append entries...");
+    // Phase 1: Leader election
+    let leader_id = {
+        let mut leader_id_opt = None;
+        let election_start_time = tokio::time::Instant::now();
+        loop {
+            // Check timeout
+            if election_start_time.elapsed() > config.election_timeout_max {
+                error!(
+                    "Simulation: Timeout waiting for leader election after {:?}",
+                    config.election_timeout_max
+                );
+                return Err(ConsensusError::Timeout("Leader election timeout".to_string()));
+            }
 
-    send_command_to_node(
-        &nodes_messengers,
-        0,
-        Message::StartAppendEntriesCmd { command: "Hello, world!".to_string() },
-    )
-    .await?;
-
-    info!("Simulation: Waiting for entry committed event...");
-    wait_for_event(
-        &mut event_rx,
-        ConsensusEvent::EntryCommitted { index: 1, entry: "Hello, world!".to_string() },
-        Duration::from_secs(10),
-    )
-    .await?;
+            // Try receiving an event
+            match event_rx.try_recv() {
+                Ok(ConsensusEvent::LeaderElected { leader_id }) => {
+                    info!("Simulation: Leader Elected: Node {}", leader_id);
+                    leader_id_opt = Some(leader_id);
+                    break; // Exit loop once leader is found
+                }
+                Ok(other_event) => {
+                    debug!(
+                        "Simulation: Ignoring event while waiting for leader: {:?}",
+                        other_event
+                    );
+                }
+                Err(broadcast::error::TryRecvError::Empty) => {
+                    // No event yet, wait briefly
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    warn!("Simulation: Event receiver lagged by {} messages.", n);
+                }
+                Err(broadcast::error::TryRecvError::Closed) => {
+                    error!("Simulation: Event channel closed unexpectedly during leader wait.");
+                    return Err(ConsensusError::Timeout("Event channel closed".to_string()));
+                }
+            }
+        }
+        leader_id_opt.expect("Loop should not exit without setting leader_id")
+    };
 
     info!("Simulation: Complete");
     info!("Press Ctrl+C to exit.");

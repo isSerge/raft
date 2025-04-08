@@ -682,17 +682,6 @@ impl NodeServer {
             Message::AppendResponse { term, success, from_id } => {
                 self.handle_append_response(term, success, from_id, timer).await?;
             }
-            Message::StartElectionCmd => {
-                info!("Node {} received StartElectionCmd", self.id());
-                if self.state() != NodeState::Leader {
-                    self.start_election().await?;
-                } else {
-                    warn!(
-                        "Node {} received StartElectionCmd but is already a Leader. Ignoring.",
-                        self.id()
-                    );
-                }
-            }
             Message::StartAppendEntriesCmd { ref command } => {
                 info!("Node {} received StartAppendEntriesCmd: '{}'", self.id(), command);
                 if self.state() == NodeState::Leader {

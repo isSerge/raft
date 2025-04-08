@@ -1031,56 +1031,6 @@ async fn test_node_process_message_vote_response() {
 }
 
 #[tokio::test]
-async fn test_node_process_message_start_election_cmd_not_leader() {
-    let mut nodes = create_network(2).await;
-    let (node_candidate, _, _, follower_receiver) = get_two_nodes(&mut nodes);
-
-    // Ensure the node is not a leader (i.e. still a Follower).
-    assert_eq!(node_candidate.state(), NodeState::Follower);
-
-    // Process a StartElectionCmd message.
-    node_candidate
-        .process_message(std::sync::Arc::new(Message::StartElectionCmd), &mut create_timer())
-        .await
-        .unwrap();
-
-    // The node should have transitioned to Candidate.
-    assert_eq!(node_candidate.state(), NodeState::Candidate);
-
-    // The other node should receive a VoteRequest from the candidate.
-    let vote_req = receive_message(follower_receiver).await.expect("Expected VoteRequest message");
-    if let Message::VoteRequest { term, candidate_id, last_log_index, last_log_term } = *vote_req {
-        assert_eq!(term, node_candidate.current_term());
-        assert_eq!(candidate_id, node_candidate.id());
-        assert_eq!(last_log_index, node_candidate.log_last_index());
-        assert_eq!(last_log_term, node_candidate.log_last_term());
-    } else {
-        panic!("Expected a VoteRequest message");
-    }
-}
-
-#[tokio::test]
-async fn test_node_process_message_start_election_cmd_already_leader() {
-    let mut nodes = create_network(1).await;
-    let node = &mut nodes[0].server;
-
-    // Transition the node to Leader.
-    node.core.transition_to_candidate();
-    node.core.transition_to_leader(&[node.id()]);
-
-    // Process a StartElectionCmd message.
-    node.process_message(std::sync::Arc::new(Message::StartElectionCmd), &mut create_timer())
-        .await
-        .unwrap();
-
-    // Since the node is already a Leader, no new message should be broadcast.
-    // Using a timeout to confirm that no message is received.
-    use tokio::time::{Duration, timeout};
-    let res = timeout(Duration::from_millis(100), receive_message(&mut nodes[0].receiver)).await;
-    assert!(res.is_err(), "Expected no message to be sent when node is already leader");
-}
-
-#[tokio::test]
 async fn test_node_process_message_start_append_entries_cmd_as_leader() {
     let mut nodes = create_network(2).await;
     let (node_leader, _, node_follower, _) = get_two_nodes(&mut nodes);
@@ -1206,8 +1156,8 @@ async fn test_handle_timer_event_heartbeat_after_election() {
     let (node, node_receiver, follower, follower_receiver) = get_two_nodes(&mut nodes);
     let mut timer = create_timer();
 
-    // Start election and wait for vote response
-    node.process_message(Arc::new(Message::StartElectionCmd), &mut timer).await.unwrap();
+    // Start election by triggering election timer
+    node.handle_timer_event(TimerType::Election, &mut timer).await.unwrap();
     let vote_request = receive_message(follower_receiver).await.unwrap();
     follower.process_message(vote_request, &mut create_timer()).await.unwrap();
     let vote_response = receive_message(node_receiver).await.unwrap();

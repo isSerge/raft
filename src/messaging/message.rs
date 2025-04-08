@@ -21,8 +21,6 @@ pub enum Message {
     AppendResponse { term: u64, success: bool, from_id: u64 },
 
     // Commands
-    /// Command to start an election
-    StartElectionCmd,
     /// Command to append a new entry to the log
     StartAppendEntriesCmd { command: String },
 }
