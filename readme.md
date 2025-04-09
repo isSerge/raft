@@ -1,6 +1,6 @@
 # Simple Raft Implementation in Rust
 
-This project is my attempt to implement Raft consensus algorithm in Rust for educational purposes. It focuses on demonstrating the core concepts of leader election, log replication, and basic state machine application within a simulated network environment.
+This project is my attempt to implement [Raft consensus algorithm](docs/raft.pdf) in Rust for educational purposes. It focuses on demonstrating the core concepts of leader election, log replication, and basic state machine application within a simulated network environment.
 
 ## Project Structure
 
