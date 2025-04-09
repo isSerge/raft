@@ -22,7 +22,7 @@ impl NodeMessenger {
         (Self { id, network, sender }, NodeReceiver::new(id, receiver))
     }
 
-    /// Internal helper - takes Arc<Message> and DOES NOT lock network
+    /// Internal helper - takes msg_arg and DOES NOT lock network
     async fn send_via_network_unlocked(
         network: &Network, // Takes unlocked network reference
         from_id: u64,
