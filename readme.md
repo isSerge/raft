@@ -39,6 +39,10 @@ The project is organized into several key modules:
 *   **State Machine Abstraction:** Uses a `StateMachine` trait to decouple the Raft logic from the specific application being replicated.
 *   **Simulation Focus:** The current networking layer is designed for in-memory simulation rather than real network sockets.
 
+## Documentation
+
+Cargo generated documentation is hosted on [github pages](https://isserge.github.io/raft/raft/)
+
 ## Current State
 
 The implementation currently includes:
